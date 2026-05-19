@@ -1,6 +1,7 @@
 # Build results
 bin/
 obj/
+build/
 *.dll
 *.exe
 *.pdb
@@ -38,3 +39,9 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
+model-output.txt
+
+server
+
+server.spec
