@@ -54,13 +54,47 @@ public class NudeNetClient : IDisposable {
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		content.Add(new ByteArrayContent(fileBytes), "file", Path.GetFileName(imagePath));
 
+		var sw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{_port}/detect", content);
+		sw.Stop();
+		Console.WriteLine($"[NudeNet] Round-trip time: {sw.ElapsedMilliseconds} ms");
+		
 		var json = await response.Content.ReadAsStringAsync();
 		Console.WriteLine($"[NudeNet] Response: {json}");
+
 		using var doc = JsonDocument.Parse(json);
 		var detections = doc.RootElement.GetProperty("detections");
 
-		return detections.GetArrayLength() > 0;
+		var explicitClasses = new HashSet<string>
+		{
+			"FEMALE_GENITALIA_EXPOSED",
+			"MALE_GENITALIA_EXPOSED",
+			"ANUS_EXPOSED",
+			"FEMALE_BREAST_EXPOSED",
+			"BUTTOCKS_EXPOSED",
+			"MALE_BREAST_EXPOSED"
+		};
+
+		bool isNsfw = false;
+		var triggeredClasses = new List<string>();
+
+		foreach (var detection in detections.EnumerateArray())
+		{
+			string className = detection.GetProperty("class").GetString()!;
+			
+			if (explicitClasses.Contains(className))
+			{
+				isNsfw = true;
+				triggeredClasses.Add(className);
+			}
+		}
+
+		if (isNsfw)
+		{
+			Console.WriteLine($"[NudeNet] NSFW triggered by: {string.Join(", ", triggeredClasses)}");
+		}
+
+		return isNsfw;
 	}
 
 	public void Dispose() {
