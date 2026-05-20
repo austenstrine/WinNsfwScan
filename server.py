@@ -1,9 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from nudenet import NudeDetector
-import uvicorn
-import io
-import socket
+import os
+import sys
 import traceback
+import socket
+import uvicorn
 
 app = FastAPI()
 def get_model_path():
@@ -12,7 +13,7 @@ def get_model_path():
     else:
         base_path = os.path.dirname(os.path.abspath(__file__))
 
-    return os.path.join(base_path, "320n.onnx")
+    return os.path.join(base_path, "640m.onnx")
 
 detector = NudeDetector(model_path=get_model_path())
 
@@ -20,7 +21,7 @@ detector = NudeDetector(model_path=get_model_path())
 async def detect(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        detections = detector.detect(contents, detection_threshold=0.4)
+        detections = detector.detect(contents)
         return {"detections": detections}
     except Exception as e:
         print(f"ERROR in /detect: {str(e)}")
