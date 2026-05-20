@@ -99,8 +99,6 @@ public sealed class DetectionLoopService : IDisposable {
 					width = screenshot.Width;
 					height = screenshot.Height;
 
-					var encodeSw = Stopwatch.StartNew();
-
 					// Prepare full screen + 4 quadrants
 					var quadrantInfos = new[] {
 						new QuadrantInfo(0, 0, "full"),
@@ -110,60 +108,67 @@ public sealed class DetectionLoopService : IDisposable {
 						new QuadrantInfo(width / 2, height / 2, "quad-br"),
 					};
 
-					var imagesToDetect = new List<(byte[] bytes, string fileName, QuadrantInfo info)>();
-
-					// Encode full screen
-					byte[] fullScreenBytes = EncodeForTransport(screenshot);
-					imagesToDetect.Add((fullScreenBytes, "screen-full.jpg", quadrantInfos[0]));
-
-					// Extract and encode quadrants
 					int quadWidth = width / 2;
 					int quadHeight = height / 2;
 
-					for (int i = 1; i < 5; i++) {
-						var info = quadrantInfos[i];
-						using (var quadBitmap = new SKBitmap(quadWidth, quadHeight)) {
-							using (var canvas = new SKCanvas(quadBitmap)) {
-								var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
-								var dest = new SKRect(0, 0, quadWidth, quadHeight);
-								canvas.DrawBitmap(screenshot, source, dest);
+					var encodeSw = Stopwatch.StartNew();
+
+					// Encode all 5 images in parallel (full screen + 4 quadrants)
+					var encodeAndDetectTasks = quadrantInfos
+						.Select((info, idx) => Task.Run(async () => {
+							byte[] imageBytes;
+							string fileName;
+
+							if (idx == 0) {
+								// Full screen
+								imageBytes = EncodeForTransport(screenshot);
+								fileName = "screen-full.jpg";
 							}
-							byte[] quadBytes = EncodeForTransport(quadBitmap);
-							imagesToDetect.Add((quadBytes, $"screen-{info.Name}.jpg", info));
-						}
-					}
+							else {
+								// Quadrant - extract and encode
+								using var quadBitmap = new SKBitmap(quadWidth, quadHeight);
+								using (var canvas = new SKCanvas(quadBitmap)) {
+									var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
+									var dest = new SKRect(0, 0, quadWidth, quadHeight);
+									canvas.DrawBitmap(screenshot, source, dest);
+								}
+								imageBytes = EncodeForTransport(quadBitmap);
+								fileName = $"screen-{info.Name}.jpg";
+							}
 
-					encodeSw.Stop();
-					encodeMs = encodeSw.ElapsedMilliseconds;
-					encodedBytes = imagesToDetect.Sum(x => x.bytes.Length);
-					encodedFormat = "jpeg";
-
-					// Detect on all 5 images in parallel
-					var detectSw = Stopwatch.StartNew();
-					var detectTasks = imagesToDetect
-						.Select((item, idx) => DetectQuadrantAsync(item.bytes, item.fileName, item.info, idx))
+							// Immediately detect after encoding (each on its own thread)
+							NudeNetDetection[] detections;
+							try {
+								detections = await _nudeNetClient.DetectAsync(imageBytes, fileName, idx).ConfigureAwait(false);
+							}
+							catch (Exception ex) {
+								AppLogger.Error($"DetectionLoopService parallel detect error for {info.Name} server {idx}", ex);
+								detections = Array.Empty<NudeNetDetection>();
+							}
+							return (Detections: detections, QuadInfo: info, Bytes: imageBytes.Length);
+						}))
 						.ToList();
 
-					var detectionResults = await Task.WhenAll(detectTasks).ConfigureAwait(false);
-					detectSw.Stop();
-					detectMs = detectSw.ElapsedMilliseconds;
+					var results = await Task.WhenAll(encodeAndDetectTasks).ConfigureAwait(false);
+					
+					encodeSw.Stop();
+					encodeMs = encodeSw.ElapsedMilliseconds;
+					encodedBytes = results.Sum(x => x.Bytes);
+					encodedFormat = "jpeg";
+					detectMs = encodeSw.ElapsedMilliseconds; // Total time includes both encode and detect in parallel
 
 					// Consolidate and adjust coordinates
 					var allDetections = new List<NudeNetDetection>();
-					for (int i = 0; i < detectionResults.Length; i++) {
-						var (detections, quadInfo) = detectionResults[i];
-						
-						// Adjust coordinates for quadrants (not needed for full screen since offset is 0,0)
-						foreach (var detection in detections) {
-							var adjusted = new NudeNetDetection(
+					foreach (var result in results) {
+						foreach (var detection in result.Detections) {
+							allDetections.Add(new NudeNetDetection(
 								detection.Class,
 								detection.Score,
-								detection.X + quadInfo.OffsetX,
-								detection.Y + quadInfo.OffsetY,
+								detection.X + result.QuadInfo.OffsetX,
+								detection.Y + result.QuadInfo.OffsetY,
 								detection.Width,
 								detection.Height
-							);
-							allDetections.Add(adjusted);
+							));
 						}
 					}
 
@@ -192,7 +197,7 @@ public sealed class DetectionLoopService : IDisposable {
 			finally {
 				cycleSw.Stop();
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} detections=5x(full+quadrants)" 
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encodeAndDetect={encodeMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} threads=5parallel" 
 				);
 			}
 
@@ -200,17 +205,6 @@ public sealed class DetectionLoopService : IDisposable {
 		}
 
 		AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
-	}
-
-	private async Task<(NudeNetDetection[] detections, QuadrantInfo info)> DetectQuadrantAsync(byte[] imageBytes, string fileName, QuadrantInfo quadInfo, int serverIndex) {
-		try {
-			var detections = await _nudeNetClient.DetectAsync(imageBytes, fileName, serverIndex).ConfigureAwait(false);
-			return (detections, quadInfo);
-		}
-		catch (Exception ex) {
-			AppLogger.Error($"DetectionLoopService.DetectQuadrantAsync error for {quadInfo.Name} on server {serverIndex}", ex);
-			return (Array.Empty<NudeNetDetection>(), quadInfo);
-		}
 	}
 
 	private static byte[] EncodeForTransport(SKBitmap bitmap) {
