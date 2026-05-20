@@ -11,6 +11,8 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
 
+	public event Action? NsfwDetected;
+
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
 	private bool _disposed;
@@ -63,7 +65,7 @@ public sealed class DetectionLoopService : IDisposable {
 					bool isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.png").ConfigureAwait(false);
 
 					if(isNsfw) {
-						Console.WriteLine("[DetectionLoop] NSFW content detected");
+						NsfwDetected?.Invoke();
 					}
 				}
 			}

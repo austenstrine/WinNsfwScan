@@ -1,0 +1,40 @@
+<Window
+	x:Class="WinNsfwScan.OverlayWindow"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	WindowStyle="None"
+	ResizeMode="NoResize"
+	WindowState="Maximized"
+	Topmost="True"
+	ShowInTaskbar="False"
+	AllowsTransparency="True"
+	Background="#D9101010"
+	Title="Content Blocked"
+>
+	<Grid MouseLeftButtonDown="OverlayRoot_MouseLeftButtonDown">
+		<Border
+			HorizontalAlignment="Center"
+			VerticalAlignment="Center"
+			Background="#AA2A2A2A"
+			Padding="36,28"
+			CornerRadius="10"
+		>
+			<StackPanel>
+				<TextBlock
+					Text="NSFW content detected"
+					Foreground="#F3F4F6"
+					FontSize="34"
+					FontWeight="SemiBold"
+					HorizontalAlignment="Center"
+				/>
+				<TextBlock
+					Text="Click anywhere to dismiss"
+					Foreground="#D1D5DB"
+					FontSize="18"
+					Margin="0,10,0,0"
+					HorizontalAlignment="Center"
+				/>
+			</StackPanel>
+		</Border>
+	</Grid>
+</Window>
