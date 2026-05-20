@@ -1,7 +1,7 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<OutputType>Exe</OutputType>
+		<OutputType>WinExe</OutputType>
 		<TargetFramework>net10.0-windows</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
@@ -43,6 +43,9 @@
 
 	<ItemGroup>
 	  <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3967.48" />
+	  <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
+	  <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
+	  <PackageReference Include="SkiaSharp" Version="3.119.2" />
 	</ItemGroup>
 
 	<Target Name="GenerateBackendConfig" BeforeTargets="Build">
