@@ -18,10 +18,15 @@ public sealed class DetectionLoopService : IDisposable {
 
 	private static readonly HashSet<string> ExplicitClasses = new() {
 		"FEMALE_GENITALIA_EXPOSED",
+		"FEMALE_GENITALIA_COVERED",
 		"MALE_GENITALIA_EXPOSED",
 		"ANUS_EXPOSED",
+		"ANUS_COVERED",
 		"FEMALE_BREAST_EXPOSED",
-		"BUTTOCKS_EXPOSED"
+		"FEMALE_BREAST_COVERED",
+		"MALE_BREAST_EXPOSED",
+		"BUTTOCKS_EXPOSED",
+		"BUTTOCKS_COVERED"
 	};
 
 	private CancellationTokenSource? _cts;
