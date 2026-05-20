@@ -20,7 +20,7 @@ detector = NudeDetector(model_path=get_model_path())
 async def detect(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        detections = detector.detect(contents)
+        detections = detector.detect(contents, detection_threshold=0.4)
         return {"detections": detections}
     except Exception as e:
         print(f"ERROR in /detect: {str(e)}")

@@ -12,7 +12,7 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
-	private const int TransportImageQuality = 75;
+	private const int TransportImageQuality = 90;
 
 	public event Action<NudeNetDetection[]>? NsfwDetected;
 
@@ -122,6 +122,13 @@ public sealed class DetectionLoopService : IDisposable {
 					allDetectionCount = allDetections.Length;
 
 					nsfwDetections = allDetections.Where(d => ExplicitClasses.Contains(d.Class)).ToArray();
+
+					// Log every raw detection so we can see what the model is actually returning.
+					if(allDetections.Length > 0)
+						AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
+					else
+						AppLogger.Info("DetectionLoopService detections: none");
+
 					if(nsfwDetections.Length > 0) {
 						AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions");
 						NsfwDetected?.Invoke(nsfwDetections);
