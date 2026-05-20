@@ -12,11 +12,14 @@ public class NudeNetClient : IDisposable {
 	private bool _disposed = false;
 
 	public NudeNetClient() {
+		WinNsfwScan.AppLogger.Info("NudeNetClient.ctor entered");
 		// Read config
 		string configPath = Path.Combine(AppContext.BaseDirectory, "backend.json");
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.ctor reading config at {configPath}");
 		string json = File.ReadAllText(configPath);
 		using var doc = JsonDocument.Parse(json);
 		string serverExecutable = doc.RootElement.GetProperty("ServerExecutable").GetString()!;
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
 		_process = new Process {
 			StartInfo = new ProcessStartInfo {
@@ -29,12 +32,16 @@ public class NudeNetClient : IDisposable {
 		};
 
 		_process.Start();
+		WinNsfwScan.AppLogger.Info("NudeNetClient.ctor backend process started");
 
 		string? line = _process.StandardOutput.ReadLine();
 		if (line != null && line.StartsWith("PORT:")) {
 			_port = int.Parse(line.Split(':')[1]);
+			WinNsfwScan.AppLogger.Info($"NudeNetClient.ctor backend announced port {_port}");
 		}
 		else {
+			string stderr = _process.StandardError.ReadToEnd();
+			WinNsfwScan.AppLogger.Error($"NudeNetClient.ctor failed to read backend port. FirstLine='{line ?? "<null>"}', stderr='{stderr}'");
 			throw new Exception("Failed to read port from backend");
 		}
 
@@ -43,28 +50,37 @@ public class NudeNetClient : IDisposable {
 		AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 		Console.CancelKeyPress += OnCancelKeyPress;
 
-		Console.WriteLine($"[NudeNet] Backend started on port {_port}");
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.ctor completed on port {_port}");
 	}
 
-	private void OnProcessExit(object? sender, EventArgs e) => Dispose();
-	private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e) => Dispose();
+	private void OnProcessExit(object? sender, EventArgs e) {
+		WinNsfwScan.AppLogger.Info("NudeNetClient.OnProcessExit entered");
+		Dispose();
+	}
+
+	private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e) {
+		WinNsfwScan.AppLogger.Info("NudeNetClient.OnCancelKeyPress entered");
+		Dispose();
+	}
 
 	public async Task<bool> IsNsfwAsync(string imagePath) {
+		WinNsfwScan.AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		return await IsNsfwAsync(fileBytes, Path.GetFileName(imagePath));
 	}
 
 	public async Task<bool> IsNsfwAsync(byte[] imageBytes, string fileName) {
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) entered size={imageBytes.Length}");
 		using var content = new MultipartFormDataContent();
 		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
 
 		var sw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{_port}/detect", content);
 		sw.Stop();
-		Console.WriteLine($"[NudeNet] Round-trip time: {sw.ElapsedMilliseconds} ms");
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) round-trip={sw.ElapsedMilliseconds}ms status={(int)response.StatusCode}");
 		
 		var json = await response.Content.ReadAsStringAsync();
-		Console.WriteLine($"[NudeNet] Response: {json}");
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) response={json}");
 
 		using var doc = JsonDocument.Parse(json);
 		var detections = doc.RootElement.GetProperty("detections");
@@ -95,13 +111,14 @@ public class NudeNetClient : IDisposable {
 
 		if (isNsfw)
 		{
-			Console.WriteLine($"[NudeNet] NSFW triggered by: {string.Join(", ", triggeredClasses)}");
+			WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) NSFW triggered by: {string.Join(", ", triggeredClasses)}");
 		}
 
 		return isNsfw;
 	}
 
 	public void Dispose() {
+		WinNsfwScan.AppLogger.Info("NudeNetClient.Dispose entered");
 		if (_disposed) return;
 		_disposed = true;
 
@@ -119,6 +136,6 @@ public class NudeNetClient : IDisposable {
 		AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
 		Console.CancelKeyPress -= OnCancelKeyPress;
 
-		Console.WriteLine("[NudeNet] Backend stopped");
+		WinNsfwScan.AppLogger.Info("NudeNetClient.Dispose completed");
 	}
 }
