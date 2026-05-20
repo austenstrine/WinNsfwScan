@@ -4,8 +4,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 
 namespace WinNsfwScan;
@@ -111,8 +109,8 @@ public partial class OverlayWindow : Window {
 			double logicalW = d.Width  / _dpiScaleX;
 			double logicalH = d.Height / _dpiScaleY;
 
-			var rect = new Rectangle {
-				Fill   = Brushes.Black,
+			var rect = new System.Windows.Shapes.Rectangle {
+				Fill   = System.Windows.Media.Brushes.Black,
 				Width  = Math.Max(logicalW, 1),
 				Height = Math.Max(logicalH, 1),
 			};
