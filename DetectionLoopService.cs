@@ -11,6 +11,8 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
+	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
+	private const int TransportImageQuality = 75;
 
 	public event Action? NsfwDetected;
 
@@ -75,6 +77,7 @@ public sealed class DetectionLoopService : IDisposable {
 			long encodeMs = 0;
 			long detectMs = 0;
 			int encodedBytes = 0;
+			string encodedFormat = "none";
 			int width = 0;
 			int height = 0;
 			bool hadScreenshot = false;
@@ -92,13 +95,14 @@ public sealed class DetectionLoopService : IDisposable {
 					height = screenshot.Height;
 
 					var encodeSw = Stopwatch.StartNew();
-					byte[] imageBytes = EncodeToPng(screenshot);
+					byte[] imageBytes = EncodeForTransport(screenshot);
 					encodeSw.Stop();
 					encodeMs = encodeSw.ElapsedMilliseconds;
 					encodedBytes = imageBytes.Length;
+					encodedFormat = "jpeg";
 
 					var detectSw = Stopwatch.StartNew();
-					isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.png").ConfigureAwait(false);
+					isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.jpg").ConfigureAwait(false);
 					detectSw.Stop();
 					detectMs = detectSw.ElapsedMilliseconds;
 
@@ -118,7 +122,7 @@ public sealed class DetectionLoopService : IDisposable {
 			finally {
 				cycleSw.Stop();
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} nsfw={(isNsfw ? "yes" : "no")}" 
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(isNsfw ? "yes" : "no")}" 
 				);
 			}
 
@@ -128,13 +132,15 @@ public sealed class DetectionLoopService : IDisposable {
 		AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
 	}
 
-	private static byte[] EncodeToPng(SKBitmap bitmap) {
-		AppLogger.Info("DetectionLoopService.EncodeToPng entered");
+	private static byte[] EncodeForTransport(SKBitmap bitmap) {
+		AppLogger.Info("DetectionLoopService.EncodeForTransport entered");
 		using var image = SKImage.FromBitmap(bitmap);
-		using var data = image.Encode(SKEncodedImageFormat.Png, 90);
-		using var stream = new MemoryStream();
-		data.SaveTo(stream);
-		return stream.ToArray();
+		using var data = image.Encode(TransportImageFormat, TransportImageQuality);
+		if(data == null) {
+			throw new InvalidOperationException("Failed to encode screenshot for transport.");
+		}
+
+		return data.ToArray();
 	}
 
 	public void Dispose() {
