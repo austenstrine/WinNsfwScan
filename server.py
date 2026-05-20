@@ -15,7 +15,7 @@ def get_model_path():
 
     return os.path.join(base_path, "640m.onnx")
 
-detector = NudeDetector(model_path=get_model_path())
+detector = NudeDetector(model_path=get_model_path(), inference_resolution=640)
 
 @app.post("/detect")
 async def detect(file: UploadFile = File(...)):

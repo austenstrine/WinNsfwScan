@@ -8,18 +8,18 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	private static readonly HashSet<string> ExplicitClasses = new() {
-		"FEMALE_GENITALIA_EXPOSED",
-		"FEMALE_GENITALIA_COVERED",
-		"MALE_GENITALIA_EXPOSED",
-		"ANUS_EXPOSED",
-		"ANUS_COVERED",
-		"FEMALE_BREAST_EXPOSED",
-		"FEMALE_BREAST_COVERED",
-		"MALE_BREAST_EXPOSED",
-		"BUTTOCKS_EXPOSED",
-		"BUTTOCKS_COVERED"
-	};
+	private static bool IsNsfwClass(string className) {
+		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if(className.StartsWith("MALE_GENITALIA_", StringComparison.OrdinalIgnoreCase))
+			return true;
+		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if(className.StartsWith("FEET_", StringComparison.OrdinalIgnoreCase))
+			return false;
+
+		return true;
+	}
 	private readonly Process _process;
 	private readonly HttpClient _httpClient;
 	private readonly int _port;
@@ -81,7 +81,7 @@ public class NudeNetClient : IDisposable {
 		//AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		var detections = await DetectAsync(fileBytes, Path.GetFileName(imagePath));
-		return detections.Any(d => ExplicitClasses.Contains(d.Class));
+		return detections.Any(d => IsNsfwClass(d.Class));
 	}
 
 	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName) {
@@ -116,7 +116,7 @@ public class NudeNetClient : IDisposable {
 		}
 
 		parseSw.Stop();
-		AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => ExplicitClasses.Contains(d.Class))}");
+		AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => IsNsfwClass(d.Class))}");
 
 		return result.ToArray();
 	}

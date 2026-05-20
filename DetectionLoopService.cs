@@ -16,18 +16,18 @@ public sealed class DetectionLoopService : IDisposable {
 
 	public event Action<NudeNetDetection[]>? NsfwDetected;
 
-	private static readonly HashSet<string> ExplicitClasses = new() {
-		"FEMALE_GENITALIA_EXPOSED",
-		"FEMALE_GENITALIA_COVERED",
-		"MALE_GENITALIA_EXPOSED",
-		"ANUS_EXPOSED",
-		"ANUS_COVERED",
-		"FEMALE_BREAST_EXPOSED",
-		"FEMALE_BREAST_COVERED",
-		"MALE_BREAST_EXPOSED",
-		"BUTTOCKS_EXPOSED",
-		"BUTTOCKS_COVERED"
-	};
+	private static bool IsNsfwClass(string className) {
+		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if(className.StartsWith("MALE_GENITALIA_", StringComparison.OrdinalIgnoreCase))
+			return true;
+		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase))
+			return false;
+		if(className.StartsWith("FEET_", StringComparison.OrdinalIgnoreCase))
+			return false;
+
+		return true;
+	}
 
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
@@ -121,7 +121,7 @@ public sealed class DetectionLoopService : IDisposable {
 					detectMs = detectSw.ElapsedMilliseconds;
 					allDetectionCount = allDetections.Length;
 
-					nsfwDetections = allDetections.Where(d => ExplicitClasses.Contains(d.Class)).ToArray();
+					nsfwDetections = allDetections.Where(d => IsNsfwClass(d.Class)).ToArray();
 
 					// Log every raw detection so we can see what the model is actually returning.
 					if(allDetections.Length > 0)
