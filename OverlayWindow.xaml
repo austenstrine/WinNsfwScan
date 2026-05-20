@@ -7,15 +7,15 @@
 	WindowState="Maximized"
 	Topmost="True"
 	ShowInTaskbar="False"
-	AllowsTransparency="True"
-	Background="#D9101010"
+	Background="#161616"
+	MouseLeftButtonDown="OverlayRoot_MouseLeftButtonDown"
 	Title="Content Blocked"
 >
 	<Grid MouseLeftButtonDown="OverlayRoot_MouseLeftButtonDown">
 		<Border
 			HorizontalAlignment="Center"
 			VerticalAlignment="Center"
-			Background="#AA2A2A2A"
+			Background="#2E2E2E"
 			Padding="36,28"
 			CornerRadius="10"
 		>

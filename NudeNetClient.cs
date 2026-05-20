@@ -74,14 +74,17 @@ public class NudeNetClient : IDisposable {
 		using var content = new MultipartFormDataContent();
 		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
 
-		var sw = Stopwatch.StartNew();
+		var requestSw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{_port}/detect", content);
-		sw.Stop();
-		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) round-trip={sw.ElapsedMilliseconds}ms status={(int)response.StatusCode}");
+		requestSw.Stop();
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) http={requestSw.ElapsedMilliseconds}ms status={(int)response.StatusCode}");
 		
+		var readSw = Stopwatch.StartNew();
 		var json = await response.Content.ReadAsStringAsync();
-		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) response={json}");
+		readSw.Stop();
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) readBody={readSw.ElapsedMilliseconds}ms length={json.Length}");
 
+		var parseSw = Stopwatch.StartNew();
 		using var doc = JsonDocument.Parse(json);
 		var detections = doc.RootElement.GetProperty("detections");
 
@@ -113,6 +116,9 @@ public class NudeNetClient : IDisposable {
 		{
 			WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) NSFW triggered by: {string.Join(", ", triggeredClasses)}");
 		}
+
+		parseSw.Stop();
+		WinNsfwScan.AppLogger.Info($"NudeNetClient.IsNsfwAsync(bytes) parse+classify={parseSw.ElapsedMilliseconds}ms detections={detections.GetArrayLength()}");
 
 		return isNsfw;
 	}

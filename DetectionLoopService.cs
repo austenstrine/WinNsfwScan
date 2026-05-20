@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using SkiaSharp;
@@ -65,13 +66,41 @@ public sealed class DetectionLoopService : IDisposable {
 	private async Task RunLoopAsync(CancellationToken cancellationToken) {
 		AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
 		AppLogger.Info("DetectionLoopService.RunLoopAsync started");
+		long cycleNumber = 0;
 
 		while(!cancellationToken.IsCancellationRequested) {
+			cycleNumber++;
+			var cycleSw = Stopwatch.StartNew();
+			long captureMs = 0;
+			long encodeMs = 0;
+			long detectMs = 0;
+			int encodedBytes = 0;
+			int width = 0;
+			int height = 0;
+			bool hadScreenshot = false;
+			bool isNsfw = false;
+
 			try {
+				var captureSw = Stopwatch.StartNew();
 				using var screenshot = _screenCaptureService.CapturePrimaryScreen();
+				captureSw.Stop();
+				captureMs = captureSw.ElapsedMilliseconds;
+
 				if(screenshot != null) {
+					hadScreenshot = true;
+					width = screenshot.Width;
+					height = screenshot.Height;
+
+					var encodeSw = Stopwatch.StartNew();
 					byte[] imageBytes = EncodeToPng(screenshot);
-					bool isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.png").ConfigureAwait(false);
+					encodeSw.Stop();
+					encodeMs = encodeSw.ElapsedMilliseconds;
+					encodedBytes = imageBytes.Length;
+
+					var detectSw = Stopwatch.StartNew();
+					isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.png").ConfigureAwait(false);
+					detectSw.Stop();
+					detectMs = detectSw.ElapsedMilliseconds;
 
 					if(isNsfw) {
 						AppLogger.Info("DetectionLoopService.RunLoopAsync NSFW detected");
@@ -85,6 +114,12 @@ public sealed class DetectionLoopService : IDisposable {
 			}
 			catch(Exception ex) {
 				AppLogger.Error("DetectionLoopService.RunLoopAsync error", ex);
+			}
+			finally {
+				cycleSw.Stop();
+				AppLogger.Info(
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} nsfw={(isNsfw ? "yes" : "no")}" 
+				);
 			}
 
 			await Task.Delay(_scanInterval, cancellationToken).ConfigureAwait(false);
