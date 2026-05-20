@@ -29,30 +29,30 @@ public sealed class DetectionLoopService : IDisposable {
 	private bool _disposed;
 
 	public DetectionLoopService(ScreenCaptureService screenCaptureService, NudeNetClient nudeNetClient, TimeSpan? scanInterval = null) {
-		AppLogger.Info("DetectionLoopService.ctor entered");
+		//AppLogger.Info("DetectionLoopService.ctor entered");
 		_screenCaptureService = screenCaptureService;
 		_nudeNetClient = nudeNetClient;
 		_scanInterval = scanInterval ?? TimeSpan.FromSeconds(1);
-		AppLogger.Info($"DetectionLoopService.ctor configured interval={_scanInterval.TotalMilliseconds}ms");
+		//AppLogger.Info($"DetectionLoopService.ctor configured interval={_scanInterval.TotalMilliseconds}ms");
 	}
 
 	public void Start() {
-		AppLogger.Info("DetectionLoopService.Start entered");
+		//AppLogger.Info("DetectionLoopService.Start entered");
 		if(_disposed)
 			throw new ObjectDisposedException(nameof(DetectionLoopService));
 
 		if(_loopTask != null && !_loopTask.IsCompleted) {
-			AppLogger.Info("DetectionLoopService.Start skipped because loop already running");
+			//AppLogger.Info("DetectionLoopService.Start skipped because loop already running");
 			return;
 		}
 
 		_cts = new CancellationTokenSource();
 		_loopTask = Task.Run(() => RunLoopAsync(_cts.Token));
-		AppLogger.Info("DetectionLoopService.Start scheduled background loop task");
+		//AppLogger.Info("DetectionLoopService.Start scheduled background loop task");
 	}
 
 	public async Task StopAsync() {
-		AppLogger.Info("DetectionLoopService.StopAsync entered");
+		//AppLogger.Info("DetectionLoopService.StopAsync entered");
 		if(_cts == null)
 			return;
 
@@ -70,12 +70,12 @@ public sealed class DetectionLoopService : IDisposable {
 		_cts.Dispose();
 		_cts = null;
 		_loopTask = null;
-		AppLogger.Info("DetectionLoopService.StopAsync completed");
+		//AppLogger.Info("DetectionLoopService.StopAsync completed");
 	}
 
 	private async Task RunLoopAsync(CancellationToken cancellationToken) {
-		AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
-		AppLogger.Info("DetectionLoopService.RunLoopAsync started");
+		//AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
+		//AppLogger.Info("DetectionLoopService.RunLoopAsync started");
 		long cycleNumber = 0;
 
 		while(!cancellationToken.IsCancellationRequested) {
@@ -124,7 +124,7 @@ public sealed class DetectionLoopService : IDisposable {
 				}
 			}
 			catch(OperationCanceledException) {
-				AppLogger.Info("DetectionLoopService.RunLoopAsync canceled");
+				//AppLogger.Info("DetectionLoopService.RunLoopAsync canceled");
 				throw;
 			}
 			catch(Exception ex) {
@@ -144,7 +144,7 @@ public sealed class DetectionLoopService : IDisposable {
 	}
 
 	private static byte[] EncodeForTransport(SKBitmap bitmap) {
-		AppLogger.Info("DetectionLoopService.EncodeForTransport entered");
+		//AppLogger.Info("DetectionLoopService.EncodeForTransport entered");
 		using var image = SKImage.FromBitmap(bitmap);
 		using var data = image.Encode(TransportImageFormat, TransportImageQuality);
 		if(data == null) {
@@ -155,7 +155,7 @@ public sealed class DetectionLoopService : IDisposable {
 	}
 
 	public void Dispose() {
-		AppLogger.Info("DetectionLoopService.Dispose entered");
+		//AppLogger.Info("DetectionLoopService.Dispose entered");
 		if(_disposed)
 			return;
 

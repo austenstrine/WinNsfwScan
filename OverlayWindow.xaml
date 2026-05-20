@@ -4,7 +4,6 @@
 	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
 	WindowStyle="None"
 	ResizeMode="NoResize"
-	WindowState="Maximized"
 	Topmost="True"
 	ShowInTaskbar="False"
 	AllowsTransparency="True"

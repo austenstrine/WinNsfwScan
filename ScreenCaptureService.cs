@@ -9,11 +9,11 @@ namespace WinNsfwScan;
 
 public class ScreenCaptureService {
 	public SKBitmap? CapturePrimaryScreen() {
-		AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen entered");
+		//AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen entered");
 		try {
 			var bounds = Screen.PrimaryScreen?.Bounds;
 			if(bounds == null) {
-				AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen no primary screen bounds");
+				//AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen no primary screen bounds");
 				return null;
 			}
 
@@ -25,7 +25,7 @@ public class ScreenCaptureService {
 			using var ms = new MemoryStream();
 			bmp.Save(ms, ImageFormat.Png);
 			ms.Position = 0;
-			AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen completed");
+			//AppLogger.Info("ScreenCaptureService.CapturePrimaryScreen completed");
 			return SKBitmap.Decode(ms);
 		}
 		catch(Exception ex) {

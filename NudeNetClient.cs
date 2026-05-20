@@ -21,14 +21,14 @@ public class NudeNetClient : IDisposable {
 	private bool _disposed = false;
 
 	public NudeNetClient() {
-		AppLogger.Info("NudeNetClient.ctor entered");
+		//AppLogger.Info("NudeNetClient.ctor entered");
 		// Read config
 		string configPath = Path.Combine(AppContext.BaseDirectory, "backend.json");
-		AppLogger.Info($"NudeNetClient.ctor reading config at {configPath}");
+		//AppLogger.Info($"NudeNetClient.ctor reading config at {configPath}");
 		string json = File.ReadAllText(configPath);
 		using var doc = JsonDocument.Parse(json);
 		string serverExecutable = doc.RootElement.GetProperty("ServerExecutable").GetString()!;
-		AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
+		//AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
 		_process = new Process {
 			StartInfo = new ProcessStartInfo {
@@ -41,12 +41,12 @@ public class NudeNetClient : IDisposable {
 		};
 
 		_process.Start();
-		AppLogger.Info("NudeNetClient.ctor backend process started");
+		//AppLogger.Info("NudeNetClient.ctor backend process started");
 
 		string? line = _process.StandardOutput.ReadLine();
 		if (line != null && line.StartsWith("PORT:")) {
 			_port = int.Parse(line.Split(':')[1]);
-			AppLogger.Info($"NudeNetClient.ctor backend announced port {_port}");
+			//AppLogger.Info($"NudeNetClient.ctor backend announced port {_port}");
 		}
 		else {
 			string stderr = _process.StandardError.ReadToEnd();
@@ -63,24 +63,24 @@ public class NudeNetClient : IDisposable {
 	}
 
 	private void OnProcessExit(object? sender, EventArgs e) {
-		AppLogger.Info("NudeNetClient.OnProcessExit entered");
+		//AppLogger.Info("NudeNetClient.OnProcessExit entered");
 		Dispose();
 	}
 
 	private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e) {
-		AppLogger.Info("NudeNetClient.OnCancelKeyPress entered");
+		//AppLogger.Info("NudeNetClient.OnCancelKeyPress entered");
 		Dispose();
 	}
 
 	public async Task<bool> IsNsfwAsync(string imagePath) {
-		AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
+		//AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		var detections = await DetectAsync(fileBytes, Path.GetFileName(imagePath));
 		return detections.Any(d => ExplicitClasses.Contains(d.Class));
 	}
 
 	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName) {
-		AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length}");
+		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length}");
 		using var content = new MultipartFormDataContent();
 		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
 
@@ -117,7 +117,7 @@ public class NudeNetClient : IDisposable {
 	}
 
 	public void Dispose() {
-		AppLogger.Info("NudeNetClient.Dispose entered");
+		//AppLogger.Info("NudeNetClient.Dispose entered");
 		if (_disposed) return;
 		_disposed = true;
 
@@ -135,6 +135,6 @@ public class NudeNetClient : IDisposable {
 		AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
 		Console.CancelKeyPress -= OnCancelKeyPress;
 
-		AppLogger.Info("NudeNetClient.Dispose completed");
+		//AppLogger.Info("NudeNetClient.Dispose completed");
 	}
 }

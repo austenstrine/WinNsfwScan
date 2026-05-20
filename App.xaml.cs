@@ -10,7 +10,7 @@ public partial class App : System.Windows.Application {
 	private OverlayWindow? _overlayWindow;
 
 	protected override void OnStartup(StartupEventArgs e) {
-		AppLogger.Info("App.OnStartup entered");
+		//AppLogger.Info("App.OnStartup entered");
 		base.OnStartup(e);
 		ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
@@ -41,17 +41,17 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void OnNsfwDetected(NudeNetDetection[] detections) {
-		AppLogger.Info($"App.OnNsfwDetected entered detections={detections.Length}");
+		//AppLogger.Info($"App.OnNsfwDetected entered detections={detections.Length}");
 		Dispatcher.InvokeAsync(() => AddBoxesToOverlay(detections));
 	}
 
 	private void AddBoxesToOverlay(NudeNetDetection[] detections) {
-		AppLogger.Info($"App.AddBoxesToOverlay entered detections={detections.Length}");
+		//AppLogger.Info($"App.AddBoxesToOverlay entered detections={detections.Length}");
 		_overlayWindow?.AddBoxes(detections);
 	}
 
 	public void ShowMainWindow() {
-		AppLogger.Info("App.ShowMainWindow entered");
+		//AppLogger.Info("App.ShowMainWindow entered");
 		if(_mainWindow == null) {
 			_mainWindow = new MainWindow();
 		}
@@ -79,7 +79,7 @@ public partial class App : System.Windows.Application {
 	}
 
 	protected override void OnExit(ExitEventArgs e) {
-		AppLogger.Info("App.OnExit entered");
+		//AppLogger.Info("App.OnExit entered");
 		if(_detectionLoopService != null) {
 			_detectionLoopService.NsfwDetected -= OnNsfwDetected;
 		}
@@ -90,7 +90,7 @@ public partial class App : System.Windows.Application {
 		_overlayWindow?.Close();
 		_detectionLoopService?.Dispose();
 		_trayIcon?.Dispose();
-		AppLogger.Info("App.OnExit completed");
+		//AppLogger.Info("App.OnExit completed");
 		base.OnExit(e);
 	}
 }

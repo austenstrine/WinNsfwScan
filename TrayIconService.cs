@@ -7,7 +7,7 @@ public class TrayIconService : IDisposable {
 	private readonly NotifyIcon _notifyIcon;
 
 	public TrayIconService() {
-		AppLogger.Info("TrayIconService.ctor entered");
+		//AppLogger.Info("TrayIconService.ctor entered");
 		_notifyIcon = new NotifyIcon {
 			Icon = SystemIcons.Application,
 			Visible = true,
@@ -32,13 +32,13 @@ public class TrayIconService : IDisposable {
 		contextMenu.Items.Add(exitItem);
 
 		_notifyIcon.ContextMenuStrip = contextMenu;
-		AppLogger.Info("TrayIconService.ctor completed");
+		//AppLogger.Info("TrayIconService.ctor completed");
 	}
 
 	public void Dispose() {
-		AppLogger.Info("TrayIconService.Dispose entered");
+		//AppLogger.Info("TrayIconService.Dispose entered");
 		_notifyIcon.Visible = false;
 		_notifyIcon.Dispose();
-		AppLogger.Info("TrayIconService.Dispose completed");
+		//AppLogger.Info("TrayIconService.Dispose completed");
 	}
 }

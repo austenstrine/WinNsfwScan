@@ -21,6 +21,12 @@ public partial class OverlayWindow : Window {
 	[DllImport("user32.dll")] static extern int   GetWindowLong(IntPtr hwnd, int index);
 	[DllImport("user32.dll")] static extern int   SetWindowLong(IntPtr hwnd, int index, int newStyle);
 	[DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
+	[DllImport("user32.dll")] static extern bool  SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+	const uint SWP_NOMOVE    = 0x0002;
+	const uint SWP_NOSIZE    = 0x0001;
+	const uint SWP_NOACTIVATE = 0x0010;
 
 	private IntPtr _hwnd;
 	private bool   _isClickThrough = true;
@@ -30,13 +36,13 @@ public partial class OverlayWindow : Window {
 	private readonly DispatcherTimer _modifierTimer;
 
 	public OverlayWindow() {
-		AppLogger.Info("OverlayWindow.ctor entered");
+		//AppLogger.Info("OverlayWindow.ctor entered");
 		InitializeComponent();
 
 		_modifierTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
 		_modifierTimer.Tick += OnModifierTimerTick;
 
-		AppLogger.Info("OverlayWindow.ctor completed");
+		//AppLogger.Info("OverlayWindow.ctor completed");
 	}
 
 	protected override void OnSourceInitialized(EventArgs e) {
@@ -54,7 +60,17 @@ public partial class OverlayWindow : Window {
 		SetClickThrough(true);
 		_modifierTimer.Start();
 
-		AppLogger.Info($"OverlayWindow.OnSourceInitialized hwnd={_hwnd} dpiX={_dpiScaleX} dpiY={_dpiScaleY}");
+		// Cover the full primary screen.
+		// AllowsTransparency+WindowState.Maximized only reaches the work area (excludes taskbar).
+		Left   = SystemParameters.VirtualScreenLeft;
+		Top    = SystemParameters.VirtualScreenTop;
+		Width  = SystemParameters.PrimaryScreenWidth;
+		Height = SystemParameters.PrimaryScreenHeight;
+
+		// Explicitly assert topmost at Win32 level — more reliable than WPF's Topmost property alone.
+		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
+		//AppLogger.Info($"OverlayWindow.OnSourceInitialized hwnd={_hwnd} dpiX={_dpiScaleX} dpiY={_dpiScaleY}");
 	}
 
 	// ── Click-through toggle ──────────────────────────────────────────────────
@@ -79,7 +95,7 @@ public partial class OverlayWindow : Window {
 		bool shouldBeClickThrough = !(ctrl && alt);
 
 		if(shouldBeClickThrough != _isClickThrough) {
-			AppLogger.Info($"OverlayWindow.OnModifierTimerTick toggling clickthrough={shouldBeClickThrough} (ctrl={ctrl} alt={alt})");
+			//AppLogger.Info($"OverlayWindow.OnModifierTimerTick toggling clickthrough={shouldBeClickThrough} (ctrl={ctrl} alt={alt})");
 			SetClickThrough(shouldBeClickThrough);
 		}
 	}
@@ -132,7 +148,7 @@ public partial class OverlayWindow : Window {
 	}
 
 	protected override void OnClosed(EventArgs e) {
-		AppLogger.Info("OverlayWindow.OnClosed entered");
+		//AppLogger.Info("OverlayWindow.OnClosed entered");
 		_modifierTimer.Stop();
 		base.OnClosed(e);
 	}

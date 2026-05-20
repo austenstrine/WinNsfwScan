@@ -45,6 +45,6 @@ public static class AppLogger {
 			"logs"
 		);
 
-		return Path.Combine(root, "runtime.log");
+		return Path.Combine(root, $"runtime-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log");
 	}
 }
