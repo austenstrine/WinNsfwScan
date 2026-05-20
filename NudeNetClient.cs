@@ -50,9 +50,13 @@ public class NudeNetClient : IDisposable {
 	private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e) => Dispose();
 
 	public async Task<bool> IsNsfwAsync(string imagePath) {
-		using var content = new MultipartFormDataContent();
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
-		content.Add(new ByteArrayContent(fileBytes), "file", Path.GetFileName(imagePath));
+		return await IsNsfwAsync(fileBytes, Path.GetFileName(imagePath));
+	}
+
+	public async Task<bool> IsNsfwAsync(byte[] imageBytes, string fileName) {
+		using var content = new MultipartFormDataContent();
+		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
 
 		var sw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{_port}/detect", content);
