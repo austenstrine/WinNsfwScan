@@ -14,7 +14,15 @@ public sealed class DetectionLoopService : IDisposable {
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 75;
 
-	public event Action? NsfwDetected;
+	public event Action<NudeNetDetection[]>? NsfwDetected;
+
+	private static readonly HashSet<string> ExplicitClasses = new() {
+		"FEMALE_GENITALIA_EXPOSED",
+		"MALE_GENITALIA_EXPOSED",
+		"ANUS_EXPOSED",
+		"FEMALE_BREAST_EXPOSED",
+		"BUTTOCKS_EXPOSED"
+	};
 
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
@@ -81,7 +89,8 @@ public sealed class DetectionLoopService : IDisposable {
 			int width = 0;
 			int height = 0;
 			bool hadScreenshot = false;
-			bool isNsfw = false;
+			NudeNetDetection[]? nsfwDetections = null;
+			int allDetectionCount = 0;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -102,13 +111,15 @@ public sealed class DetectionLoopService : IDisposable {
 					encodedFormat = "jpeg";
 
 					var detectSw = Stopwatch.StartNew();
-					isNsfw = await _nudeNetClient.IsNsfwAsync(imageBytes, "screen.jpg").ConfigureAwait(false);
+					var allDetections = await _nudeNetClient.DetectAsync(imageBytes, "screen.jpg").ConfigureAwait(false);
 					detectSw.Stop();
 					detectMs = detectSw.ElapsedMilliseconds;
+					allDetectionCount = allDetections.Length;
 
-					if(isNsfw) {
-						AppLogger.Info("DetectionLoopService.RunLoopAsync NSFW detected");
-						NsfwDetected?.Invoke();
+					nsfwDetections = allDetections.Where(d => ExplicitClasses.Contains(d.Class)).ToArray();
+					if(nsfwDetections.Length > 0) {
+						AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions");
+						NsfwDetected?.Invoke(nsfwDetections);
 					}
 				}
 			}
@@ -122,7 +133,7 @@ public sealed class DetectionLoopService : IDisposable {
 			finally {
 				cycleSw.Stop();
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(isNsfw ? "yes" : "no")}" 
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount}" 
 				);
 			}
 

@@ -28,6 +28,10 @@ public partial class App : System.Windows.Application {
 			_detectionLoopService.Start();
 
 			_mainWindow = new MainWindow();
+
+			_overlayWindow = new OverlayWindow();
+			_overlayWindow.Show();
+
 			AppLogger.Info("App.OnStartup completed");
 		}
 		catch(Exception ex) {
@@ -36,23 +40,14 @@ public partial class App : System.Windows.Application {
 		}
 	}
 
-	private void OnNsfwDetected() {
-		AppLogger.Info("App.OnNsfwDetected entered");
-		Dispatcher.InvokeAsync(ShowOverlay);
+	private void OnNsfwDetected(NudeNetDetection[] detections) {
+		AppLogger.Info($"App.OnNsfwDetected entered detections={detections.Length}");
+		Dispatcher.InvokeAsync(() => AddBoxesToOverlay(detections));
 	}
 
-	private void ShowOverlay() {
-		AppLogger.Info("App.ShowOverlay entered");
-		if(_overlayWindow != null && _overlayWindow.IsVisible)
-		{
-			AppLogger.Info("App.ShowOverlay skipped because overlay is already visible");
-			return;
-		}
-
-		_overlayWindow = new OverlayWindow();
-		_overlayWindow.Closed += (_, _) => _overlayWindow = null;
-		_overlayWindow.Show();
-		AppLogger.Info("App.ShowOverlay displayed overlay window");
+	private void AddBoxesToOverlay(NudeNetDetection[] detections) {
+		AppLogger.Info($"App.AddBoxesToOverlay entered detections={detections.Length}");
+		_overlayWindow?.AddBoxes(detections);
 	}
 
 	public void ShowMainWindow() {
