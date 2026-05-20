@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -8,21 +10,11 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	private static bool IsNsfwClass(string className) {
-		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
-			return false;
-		if(className.StartsWith("MALE_GENITALIA_", StringComparison.OrdinalIgnoreCase))
-			return true;
-		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase))
-			return false;
-		if(className.StartsWith("FEET_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		return true;
-	}
-	private readonly Process _process;
+	private const int ServerCount = 5;
+	private readonly List<Process> _processes = new();
+	private readonly List<int> _ports = new();
 	private readonly HttpClient _httpClient;
-	private readonly int _port;
+	private int _currentServerIndex = 0;
 	private bool _disposed = false;
 
 	public NudeNetClient() {
@@ -35,28 +27,35 @@ public class NudeNetClient : IDisposable {
 		string serverExecutable = doc.RootElement.GetProperty("ServerExecutable").GetString()!;
 		//AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
-		_process = new Process {
-			StartInfo = new ProcessStartInfo {
-				FileName = serverExecutable,
-				UseShellExecute = false,
-				RedirectStandardOutput = true,
-				RedirectStandardError = true,
-				CreateNoWindow = true
+		// Spawn 5 server processes
+		for (int i = 0; i < ServerCount; i++) {
+			var process = new Process {
+				StartInfo = new ProcessStartInfo {
+					FileName = serverExecutable,
+					UseShellExecute = false,
+					RedirectStandardOutput = true,
+					RedirectStandardError = true,
+					CreateNoWindow = true
+				}
+			};
+
+			process.Start();
+			//AppLogger.Info($"NudeNetClient.ctor backend process {i+1} started");
+
+			string? line = process.StandardOutput.ReadLine();
+			if (line != null && line.StartsWith("PORT:")) {
+				int port = int.Parse(line.Split(':')[1]);
+				_ports.Add(port);
+				_processes.Add(process);
+				//AppLogger.Info($"NudeNetClient.ctor backend {i+1} announced port {port}");
 			}
-		};
-
-		_process.Start();
-		//AppLogger.Info("NudeNetClient.ctor backend process started");
-
-		string? line = _process.StandardOutput.ReadLine();
-		if (line != null && line.StartsWith("PORT:")) {
-			_port = int.Parse(line.Split(':')[1]);
-			//AppLogger.Info($"NudeNetClient.ctor backend announced port {_port}");
-		}
-		else {
-			string stderr = _process.StandardError.ReadToEnd();
-			AppLogger.Error($"NudeNetClient.ctor failed to read backend port. FirstLine='{line ?? "<null>"}', stderr='{stderr}'");
-			throw new Exception("Failed to read port from backend");
+			else {
+				string stderr = process.StandardError.ReadToEnd();
+				AppLogger.Error($"NudeNetClient.ctor failed to read backend {i+1} port. FirstLine='{line ?? "<null>"}', stderr='{stderr}'");
+				process.Kill(entireProcessTree: true);
+				process.Dispose();
+				throw new Exception($"Failed to read port from backend server {i+1}");
+			}
 		}
 
 		_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
@@ -64,7 +63,7 @@ public class NudeNetClient : IDisposable {
 		AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
 		Console.CancelKeyPress += OnCancelKeyPress;
 
-		AppLogger.Info($"NudeNetClient.ctor completed on port {_port}");
+		AppLogger.Info($"NudeNetClient.ctor completed with {ServerCount} servers on ports: {string.Join(", ", _ports)}");
 	}
 
 	private void OnProcessExit(object? sender, EventArgs e) {
@@ -81,18 +80,29 @@ public class NudeNetClient : IDisposable {
 		//AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		var detections = await DetectAsync(fileBytes, Path.GetFileName(imagePath));
-		return detections.Any(d => IsNsfwClass(d.Class));
+		return detections.Any(d => NsfwClassifier.IsNsfwClass(d.Class));
 	}
 
-	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName) {
-		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length}");
+	/// <summary>
+	/// Detect NSFW content in an image using a specific server (round-robin by default).
+	/// </summary>
+	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName, int? serverIndex = null) {
+		// Use round-robin if no specific server requested
+		if (serverIndex == null) {
+			serverIndex = _currentServerIndex;
+			_currentServerIndex = (_currentServerIndex + 1) % ServerCount;
+		}
+
+		int port = _ports[serverIndex.Value];
+
+		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length} server={serverIndex}");
 		using var content = new MultipartFormDataContent();
 		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
 
 		var requestSw = Stopwatch.StartNew();
-		var response = await _httpClient.PostAsync($"http://127.0.0.1:{_port}/detect", content);
+		var response = await _httpClient.PostAsync($"http://127.0.0.1:{port}/detect", content);
 		requestSw.Stop();
-		AppLogger.Info($"NudeNetClient.DetectAsync http={requestSw.ElapsedMilliseconds}ms status={(int)response.StatusCode}");
+		AppLogger.Info($"NudeNetClient.DetectAsync http={requestSw.ElapsedMilliseconds}ms status={(int)response.StatusCode} server={serverIndex}");
 
 		var readSw = Stopwatch.StartNew();
 		var json = await response.Content.ReadAsStringAsync();
@@ -116,7 +126,7 @@ public class NudeNetClient : IDisposable {
 		}
 
 		parseSw.Stop();
-		AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => IsNsfwClass(d.Class))}");
+		AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => NsfwClassifier.IsNsfwClass(d.Class))}");
 
 		return result.ToArray();
 	}
@@ -127,19 +137,23 @@ public class NudeNetClient : IDisposable {
 		_disposed = true;
 
 		try {
-			if (_process != null && !_process.HasExited) {
-				_process.Kill(entireProcessTree: true);
-				_process.WaitForExit(2000);
+			foreach(var process in _processes) {
+				if (process != null && !process.HasExited) {
+					process.Kill(entireProcessTree: true);
+					process.WaitForExit(2000);
+				}
+				process?.Dispose();
 			}
 		}
-		catch { }
+		catch (Exception ex) {
+			AppLogger.Error("NudeNetClient.Dispose error killing processes", ex);
+		}
 
-		_process?.Dispose();
 		_httpClient?.Dispose();
 
 		AppDomain.CurrentDomain.ProcessExit -= OnProcessExit;
 		Console.CancelKeyPress -= OnCancelKeyPress;
 
-		//AppLogger.Info("NudeNetClient.Dispose completed");
+		AppLogger.Info("NudeNetClient.Dispose completed - all 5 server processes cleaned up");
 	}
 }

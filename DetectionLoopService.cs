@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using SkiaSharp;
@@ -16,18 +18,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 	public event Action<NudeNetDetection[]>? NsfwDetected;
 
-	private static bool IsNsfwClass(string className) {
-		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
-			return false;
-		if(className.StartsWith("MALE_GENITALIA_", StringComparison.OrdinalIgnoreCase))
-			return true;
-		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase))
-			return false;
-		if(className.StartsWith("FEET_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		return true;
-	}
+	private record QuadrantInfo(int OffsetX, int OffsetY, string Name);
 
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
@@ -109,28 +100,84 @@ public sealed class DetectionLoopService : IDisposable {
 					height = screenshot.Height;
 
 					var encodeSw = Stopwatch.StartNew();
-					byte[] imageBytes = EncodeForTransport(screenshot);
+
+					// Prepare full screen + 4 quadrants
+					var quadrantInfos = new[] {
+						new QuadrantInfo(0, 0, "full"),
+						new QuadrantInfo(0, 0, "quad-tl"),
+						new QuadrantInfo(width / 2, 0, "quad-tr"),
+						new QuadrantInfo(0, height / 2, "quad-bl"),
+						new QuadrantInfo(width / 2, height / 2, "quad-br"),
+					};
+
+					var imagesToDetect = new List<(byte[] bytes, string fileName, QuadrantInfo info)>();
+
+					// Encode full screen
+					byte[] fullScreenBytes = EncodeForTransport(screenshot);
+					imagesToDetect.Add((fullScreenBytes, "screen-full.jpg", quadrantInfos[0]));
+
+					// Extract and encode quadrants
+					int quadWidth = width / 2;
+					int quadHeight = height / 2;
+
+					for (int i = 1; i < 5; i++) {
+						var info = quadrantInfos[i];
+						using (var quadBitmap = new SKBitmap(quadWidth, quadHeight)) {
+							using (var canvas = new SKCanvas(quadBitmap)) {
+								var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
+								var dest = new SKRect(0, 0, quadWidth, quadHeight);
+								canvas.DrawBitmap(screenshot, source, dest);
+							}
+							byte[] quadBytes = EncodeForTransport(quadBitmap);
+							imagesToDetect.Add((quadBytes, $"screen-{info.Name}.jpg", info));
+						}
+					}
+
 					encodeSw.Stop();
 					encodeMs = encodeSw.ElapsedMilliseconds;
-					encodedBytes = imageBytes.Length;
+					encodedBytes = imagesToDetect.Sum(x => x.bytes.Length);
 					encodedFormat = "jpeg";
 
+					// Detect on all 5 images in parallel
 					var detectSw = Stopwatch.StartNew();
-					var allDetections = await _nudeNetClient.DetectAsync(imageBytes, "screen.jpg").ConfigureAwait(false);
+					var detectTasks = imagesToDetect
+						.Select((item, idx) => DetectQuadrantAsync(item.bytes, item.fileName, item.info, idx))
+						.ToList();
+
+					var detectionResults = await Task.WhenAll(detectTasks).ConfigureAwait(false);
 					detectSw.Stop();
 					detectMs = detectSw.ElapsedMilliseconds;
-					allDetectionCount = allDetections.Length;
 
-					nsfwDetections = allDetections.Where(d => IsNsfwClass(d.Class)).ToArray();
+					// Consolidate and adjust coordinates
+					var allDetections = new List<NudeNetDetection>();
+					for (int i = 0; i < detectionResults.Length; i++) {
+						var (detections, quadInfo) = detectionResults[i];
+						
+						// Adjust coordinates for quadrants (not needed for full screen since offset is 0,0)
+						foreach (var detection in detections) {
+							var adjusted = new NudeNetDetection(
+								detection.Class,
+								detection.Score,
+								detection.X + quadInfo.OffsetX,
+								detection.Y + quadInfo.OffsetY,
+								detection.Width,
+								detection.Height
+							);
+							allDetections.Add(adjusted);
+						}
+					}
+
+					allDetectionCount = allDetections.Count;
+					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwClass(d.Class)).ToArray();
 
 					// Log every raw detection so we can see what the model is actually returning.
-					if(allDetections.Length > 0)
+					if(allDetections.Count > 0)
 						AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
 					else
 						AppLogger.Info("DetectionLoopService detections: none");
 
 					if(nsfwDetections.Length > 0) {
-						AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions");
+						AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 5 detection passes");
 						NsfwDetected?.Invoke(nsfwDetections);
 					}
 				}
@@ -145,7 +192,7 @@ public sealed class DetectionLoopService : IDisposable {
 			finally {
 				cycleSw.Stop();
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount}" 
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encode={encodeMs}ms detect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} detections=5x(full+quadrants)" 
 				);
 			}
 
@@ -153,6 +200,17 @@ public sealed class DetectionLoopService : IDisposable {
 		}
 
 		AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
+	}
+
+	private async Task<(NudeNetDetection[] detections, QuadrantInfo info)> DetectQuadrantAsync(byte[] imageBytes, string fileName, QuadrantInfo quadInfo, int serverIndex) {
+		try {
+			var detections = await _nudeNetClient.DetectAsync(imageBytes, fileName, serverIndex).ConfigureAwait(false);
+			return (detections, quadInfo);
+		}
+		catch (Exception ex) {
+			AppLogger.Error($"DetectionLoopService.DetectQuadrantAsync error for {quadInfo.Name} on server {serverIndex}", ex);
+			return (Array.Empty<NudeNetDetection>(), quadInfo);
+		}
 	}
 
 	private static byte[] EncodeForTransport(SKBitmap bitmap) {
