@@ -1,10 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<OutputType>Exe</OutputType>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFramework>net10.0-windows</TargetFramework>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
+		<UseWindowsForms>true</UseWindowsForms>
+		<UseWPF>true</UseWPF>
 	</PropertyGroup>
 
 	<PropertyGroup>
@@ -21,17 +23,32 @@
 		</Content>
 	</ItemGroup>
 
-	<Target Name="GenerateBackendConfig" BeforeTargets="Build">
-		<Exec 
-			Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --add-data &quot;320n.onnx:nudenet&quot; --name server --distpath $(ProjectDir) --workpath $(ProjectDir)build --specpath $(ProjectDir) server.py"
-			WorkingDirectory="$(ProjectDir)" 
-		/>
+	<!-- ===================================================== -->
+	<!--  Automatically build frontend on every dotnet build   -->
+	<!-- ===================================================== -->
+	<Target Name="BuildFrontend" BeforeTargets="Build">
+		<Message Text="=== Building frontend (Vite) ===" Importance="high" />
 
-		<WriteLinesToFile 
-			File="$(ProjectDir)backend.json"
-			Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }"
-			Overwrite="true" 
-		/>
+		<Exec Command="npm run build" WorkingDirectory="$(ProjectDir)frontend" ContinueOnError="false" />
+
+		<!-- Copy dist folder into output directory -->
+		<ItemGroup>
+			<FrontendFiles Include="$(ProjectDir)frontend\dist\**\*.*" />
+		</ItemGroup>
+
+		<Copy SourceFiles="@(FrontendFiles)" DestinationFolder="$(OutputPath)webui\%(RecursiveDir)" SkipUnchangedFiles="true" />
+
+		<Message Text="=== Frontend built and copied to webui/ ===" Importance="high" />
+	</Target>
+
+	<ItemGroup>
+	  <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3967.48" />
+	</ItemGroup>
+
+	<Target Name="GenerateBackendConfig" BeforeTargets="Build">
+		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --name server --distpath $(ProjectDir) --workpath $(ProjectDir)build --specpath $(ProjectDir) server.py" WorkingDirectory="$(ProjectDir)" />
+
+		<WriteLinesToFile File="$(ProjectDir)backend.json" Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }" Overwrite="true" />
 
 		<Message Text="Generated backend.json with $(BackendExecutable)" Importance="high" />
 	</Target>

@@ -1,0 +1,12 @@
+<Application 
+	x:Class="WinNsfwScan.App"
+	xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+	xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+	ShutdownMode="OnExplicitShutdown"
+>
+	
+	<!-- We removed StartupUri because this is a tray app -->
+	<Application.Resources>
+		
+	</Application.Resources>
+</Application>
