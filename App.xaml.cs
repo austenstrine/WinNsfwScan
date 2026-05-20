@@ -23,7 +23,7 @@ public partial class App : System.Windows.Application {
 
 			var screenCaptureService = new ScreenCaptureService();
 			var nudeNetClient = new NudeNetClient();
-			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.FromSeconds(1));
+			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.Zero);
 			_detectionLoopService.NsfwDetected += OnNsfwDetected;
 			_detectionLoopService.Start();
 

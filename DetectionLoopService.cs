@@ -87,6 +87,7 @@ public sealed class DetectionLoopService : IDisposable {
 			bool hadScreenshot = false;
 			NudeNetDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
+			(NudeNetDetection[] Detections, QuadrantInfo QuadInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -119,6 +120,7 @@ public sealed class DetectionLoopService : IDisposable {
 							byte[] imageBytes;
 							string fileName;
 
+							var slotEncodeSw = Stopwatch.StartNew();
 							if (idx == 0) {
 								// Full screen
 								imageBytes = EncodeForTransport(screenshot);
@@ -135,9 +137,11 @@ public sealed class DetectionLoopService : IDisposable {
 								imageBytes = EncodeForTransport(quadBitmap);
 								fileName = $"screen-{info.Name}.jpg";
 							}
+							slotEncodeSw.Stop();
 
 							// Immediately detect after encoding (each on its own thread)
 							NudeNetDetection[] detections;
+							var slotDetectSw = Stopwatch.StartNew();
 							try {
 								detections = await _nudeNetClient.DetectAsync(imageBytes, fileName, idx).ConfigureAwait(false);
 							}
@@ -145,17 +149,25 @@ public sealed class DetectionLoopService : IDisposable {
 								AppLogger.Error($"DetectionLoopService parallel detect error for {info.Name} server {idx}", ex);
 								detections = Array.Empty<NudeNetDetection>();
 							}
-							return (Detections: detections, QuadInfo: info, Bytes: imageBytes.Length);
+							slotDetectSw.Stop();
+
+							return (
+								Detections: detections,
+								QuadInfo: info,
+								Bytes: imageBytes.Length,
+								SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
+								SlotDetectMs: slotDetectSw.ElapsedMilliseconds
+							);
 						}))
 						.ToList();
 
-					var results = await Task.WhenAll(encodeAndDetectTasks).ConfigureAwait(false);
-					
+					results = await Task.WhenAll(encodeAndDetectTasks).ConfigureAwait(false);
+
 					encodeSw.Stop();
 					encodeMs = encodeSw.ElapsedMilliseconds;
 					encodedBytes = results.Sum(x => x.Bytes);
 					encodedFormat = "jpeg";
-					detectMs = encodeSw.ElapsedMilliseconds; // Total time includes both encode and detect in parallel
+					detectMs = results.Max(x => x.SlotDetectMs);
 
 					// Consolidate and adjust coordinates
 					var allDetections = new List<NudeNetDetection>();
@@ -175,14 +187,10 @@ public sealed class DetectionLoopService : IDisposable {
 					allDetectionCount = allDetections.Count;
 					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwClass(d.Class)).ToArray();
 
-					// Log every raw detection so we can see what the model is actually returning.
-					if(allDetections.Count > 0)
-						AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
-					else
-						AppLogger.Info("DetectionLoopService detections: none");
+					//AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
 
 					if(nsfwDetections.Length > 0) {
-						AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 5 detection passes");
+						//AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 5 detection passes");
 						NsfwDetected?.Invoke(nsfwDetections);
 					}
 				}
@@ -196,15 +204,20 @@ public sealed class DetectionLoopService : IDisposable {
 			}
 			finally {
 				cycleSw.Stop();
+				var slotBreakdown = results == null ? "n/a" :
+					string.Join(" | ", results.Select((r, i) => {
+						string model = i == 0 ? "640m" : "320n";
+						return $"{r.QuadInfo.Name}({model}): encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}";
+					}));
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms encodeAndDetect={encodeMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} threads=5parallel" 
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms slowestDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
 				);
 			}
 
 			await Task.Delay(_scanInterval, cancellationToken).ConfigureAwait(false);
 		}
 
-		AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
+		//AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
 	}
 
 	private static byte[] EncodeForTransport(SKBitmap bitmap) {
@@ -227,6 +240,6 @@ public sealed class DetectionLoopService : IDisposable {
 
 		StopAsync().GetAwaiter().GetResult();
 		_nudeNetClient.Dispose();
-		AppLogger.Info("DetectionLoopService.Dispose completed");
+		//AppLogger.Info("DetectionLoopService.Dispose completed");
 	}
 }
