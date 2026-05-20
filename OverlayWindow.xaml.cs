@@ -42,6 +42,12 @@ public partial class OverlayWindow : Window {
 		_modifierTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
 		_modifierTimer.Tick += OnModifierTimerTick;
 
+		// WPF's internal layout pass (called after OnSourceInitialized) uses HWND_TOP,
+		// which silently demotes the window from the topmost Z-band.  Re-assert TOPMOST
+		// here, after WPF has finished its first layout/render.
+		ContentRendered += (_, _) =>
+			SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
 		//AppLogger.Info("OverlayWindow.ctor completed");
 	}
 
@@ -90,6 +96,9 @@ public partial class OverlayWindow : Window {
 
 	// Polls keyboard state every 50 ms; disables click-through while Ctrl+Alt is held
 	private void OnModifierTimerTick(object? sender, EventArgs e) {
+		// Re-assert topmost every tick so activating other windows can't push us down.
+		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+
 		bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 		bool alt  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
 		bool shouldBeClickThrough = !(ctrl && alt);
