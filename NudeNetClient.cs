@@ -10,10 +10,8 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	// Server 0: full-screen detection with 640m model
-	// Servers 1-4: quadrant detection with 320n model
+	// All 4 servers use 320n for fast quadrant detection
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("640m.onnx", 640),
 		("320n.onnx", 320),
 		("320n.onnx", 320),
 		("320n.onnx", 320),

@@ -100,13 +100,12 @@ public sealed class DetectionLoopService : IDisposable {
 					width = screenshot.Width;
 					height = screenshot.Height;
 
-					// Prepare full screen + 4 quadrants
+					// 4 quadrant tiles covering the full screen
 					var quadrantInfos = new[] {
-						new QuadrantInfo(0, 0, "full"),
-						new QuadrantInfo(0, 0, "quad-tl"),
-						new QuadrantInfo(width / 2, 0, "quad-tr"),
-						new QuadrantInfo(0, height / 2, "quad-bl"),
-						new QuadrantInfo(width / 2, height / 2, "quad-br"),
+						new QuadrantInfo(0,          0,           "quad-tl"),
+						new QuadrantInfo(width / 2,  0,           "quad-tr"),
+						new QuadrantInfo(0,          height / 2,  "quad-bl"),
+						new QuadrantInfo(width / 2,  height / 2,  "quad-br"),
 					};
 
 					int quadWidth = width / 2;
@@ -114,36 +113,24 @@ public sealed class DetectionLoopService : IDisposable {
 
 					var encodeSw = Stopwatch.StartNew();
 
-					// Encode all 5 images in parallel (full screen + 4 quadrants)
+					// Encode and detect all 4 quadrants in parallel
 					var encodeAndDetectTasks = quadrantInfos
 						.Select((info, idx) => Task.Run(async () => {
-							byte[] imageBytes;
-							string fileName;
-
 							var slotEncodeSw = Stopwatch.StartNew();
-							if (idx == 0) {
-								// Full screen
-								imageBytes = EncodeForTransport(screenshot);
-								fileName = "screen-full.jpg";
+							using var quadBitmap = new SKBitmap(quadWidth, quadHeight);
+							using (var canvas = new SKCanvas(quadBitmap)) {
+								var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
+								var dest = new SKRect(0, 0, quadWidth, quadHeight);
+								canvas.DrawBitmap(screenshot, source, dest);
 							}
-							else {
-								// Quadrant - extract and encode
-								using var quadBitmap = new SKBitmap(quadWidth, quadHeight);
-								using (var canvas = new SKCanvas(quadBitmap)) {
-									var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
-									var dest = new SKRect(0, 0, quadWidth, quadHeight);
-									canvas.DrawBitmap(screenshot, source, dest);
-								}
-								imageBytes = EncodeForTransport(quadBitmap);
-								fileName = $"screen-{info.Name}.jpg";
-							}
+							byte[] imageBytes = EncodeForTransport(quadBitmap);
 							slotEncodeSw.Stop();
 
 							// Immediately detect after encoding (each on its own thread)
 							NudeNetDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								detections = await _nudeNetClient.DetectAsync(imageBytes, fileName, idx).ConfigureAwait(false);
+								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{info.Name}.jpg", idx).ConfigureAwait(false);
 							}
 							catch (Exception ex) {
 								AppLogger.Error($"DetectionLoopService parallel detect error for {info.Name} server {idx}", ex);
@@ -205,10 +192,8 @@ public sealed class DetectionLoopService : IDisposable {
 			finally {
 				cycleSw.Stop();
 				var slotBreakdown = results == null ? "n/a" :
-					string.Join(" | ", results.Select((r, i) => {
-						string model = i == 0 ? "640m" : "320n";
-						return $"{r.QuadInfo.Name}({model}): encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}";
-					}));
+					string.Join(" | ", results.Select(r =>
+						$"{r.QuadInfo.Name}: encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
 				AppLogger.Info(
 					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms slowestDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
 				);
