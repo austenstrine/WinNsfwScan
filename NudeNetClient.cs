@@ -31,7 +31,12 @@ public class NudeNetClient : IDisposable {
 		//AppLogger.Info($"NudeNetClient.ctor reading config at {configPath}");
 		string json = File.ReadAllText(configPath);
 		using var doc = JsonDocument.Parse(json);
-		string serverExecutable = doc.RootElement.GetProperty("ServerExecutable").GetString()!;
+		// Resolve server executable relative to the app's base directory so it works
+		// regardless of working directory (shortcuts, launchers, etc.)
+		string serverExecutable = Path.Combine(
+			AppContext.BaseDirectory,
+			doc.RootElement.GetProperty("ServerExecutable").GetString()!
+		);
 		//AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
 		// Spawn servers with per-slot model configuration
