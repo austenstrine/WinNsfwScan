@@ -13,11 +13,11 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
-	private const int TargetScanSize = 320;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
 
-	public event Action<NudeNetDetection[]>? NsfwDetected;
+	public event Action<long, NudeNetDetection[]>? NsfwDetected;
+	public event Action<long>? CycleCompleted;
 
 	private record ScanRegionInfo(int OffsetX, int OffsetY, string Name);
 
@@ -74,7 +74,6 @@ public sealed class DetectionLoopService : IDisposable {
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync started");
 		long cycleNumber = 0;
-		int nextRowIndex = 0;
 
 		while(!cancellationToken.IsCancellationRequested) {
 			cycleNumber++;
@@ -100,40 +99,22 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					int scanSize = Math.Min(TargetScanSize, Math.Min(width, height));
+					// Use hxh tiles (height-by-height) and let the backend downscale to its inference size.
+					int scanSize = Math.Min(height, width);
 					int maxX = Math.Max(0, width - scanSize);
-					int maxY = Math.Max(0, height - scanSize);
+					int midY = Math.Max(0, (height - scanSize) / 2);
 
-					int[] xPositions = {
-						0,
-						maxX / 4,
-						maxX / 2,
-						(3 * maxX) / 4,
-						maxX,
+					var scanRegions = new[] {
+						new ScanRegionInfo(0, midY, "left"),
+						new ScanRegionInfo(maxX / 2, midY, "center"),
+						new ScanRegionInfo(maxX, midY, "right"),
 					};
-
-					int[] yPositions = {
-						0,
-						maxY / 2,
-						maxY,
-					};
-
-					string[] rowNames = { "top", "center", "bottom" };
-					string[] colNames = { "left", "center-left", "center", "center-right", "right" };
-
-					int activeRowIndex = nextRowIndex;
-					nextRowIndex = (nextRowIndex + 1) % rowNames.Length;
-					int activeRowY = yPositions[activeRowIndex];
-
-					var rowRegions = xPositions
-						.Select((x, i) => new ScanRegionInfo(x, activeRowY, $"{rowNames[activeRowIndex]}-{colNames[i]}"))
-						.ToArray();
 
 					var encodeSw = Stopwatch.StartNew();
 					var detectSw = Stopwatch.StartNew();
-					var rowTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
+					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
-					foreach (var region in rowRegions) {
+					foreach (var region in scanRegions) {
 						var slotEncodeSw = Stopwatch.StartNew();
 						using var regionBitmap = new SKBitmap(scanSize, scanSize);
 						using (var canvas = new SKCanvas(regionBitmap)) {
@@ -144,7 +125,7 @@ public sealed class DetectionLoopService : IDisposable {
 						byte[] imageBytes = EncodeForTransport(regionBitmap);
 						slotEncodeSw.Stop();
 
-						rowTasks.Add(Task.Run(async () => {
+						regionTasks.Add(Task.Run(async () => {
 							NudeNetDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
@@ -166,7 +147,7 @@ public sealed class DetectionLoopService : IDisposable {
 						}));
 					}
 
-					results = await Task.WhenAll(rowTasks).ConfigureAwait(false);
+					results = await Task.WhenAll(regionTasks).ConfigureAwait(false);
 					detectSw.Stop();
 					encodeSw.Stop();
 					encodeMs = results.Sum(x => x.SlotEncodeMs);
@@ -195,7 +176,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 					if(nsfwDetections.Length > 0) {
 						//AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 1 detection pass");
-						NsfwDetected?.Invoke(nsfwDetections);
+						NsfwDetected?.Invoke(cycleNumber, nsfwDetections);
 					}
 				}
 			}
@@ -215,6 +196,7 @@ public sealed class DetectionLoopService : IDisposable {
 				AppLogger.Info(
 					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=jpeg quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
 				);
+				CycleCompleted?.Invoke(cycleNumber);
 			}
 
 			await Task.Delay(_scanInterval, cancellationToken).ConfigureAwait(false);

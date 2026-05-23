@@ -10,9 +10,9 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	// Single server for sequential 320x320 tile scans.
+	// Single server for concurrent hxh left+center+right scans (server downsizes to 640).
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("320n.onnx", 320),
+		("640m.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();

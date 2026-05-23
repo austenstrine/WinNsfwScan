@@ -20,6 +20,7 @@ public partial class OverlayWindow : Window {
 
 	[DllImport("user32.dll")] static extern int   GetWindowLong(IntPtr hwnd, int index);
 	[DllImport("user32.dll")] static extern int   SetWindowLong(IntPtr hwnd, int index, int newStyle);
+	[DllImport("user32.dll", SetLastError = true)] static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 	[DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
 	[DllImport("user32.dll")] static extern bool  SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 
@@ -27,6 +28,7 @@ public partial class OverlayWindow : Window {
 	const uint SWP_NOMOVE    = 0x0002;
 	const uint SWP_NOSIZE    = 0x0001;
 	const uint SWP_NOACTIVATE = 0x0010;
+	const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 
 	private IntPtr _hwnd;
 	private bool   _isClickThrough = true;
@@ -76,6 +78,7 @@ public partial class OverlayWindow : Window {
 
 		// Explicitly assert topmost at Win32 level — more reliable than WPF's Topmost property alone.
 		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		SetWindowDisplayAffinity(_hwnd, WDA_EXCLUDEFROMCAPTURE);
 
 		//AppLogger.Info($"OverlayWindow.OnSourceInitialized hwnd={_hwnd} dpiX={_dpiScaleX} dpiY={_dpiScaleY}");
 	}
@@ -121,6 +124,14 @@ public partial class OverlayWindow : Window {
 	}
 
 	// ── Box management ────────────────────────────────────────────────────────
+
+	/// <summary>
+	/// Replaces all censorship rectangles with the provided detections.
+	/// </summary>
+	public void ReplaceBoxes(NudeNetDetection[] detections) {
+		BoxCanvas.Children.Clear();
+		AddBoxes(detections);
+	}
 
 	/// <summary>
 	/// Appends black censorship rectangles for each detection.

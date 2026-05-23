@@ -4,7 +4,7 @@ namespace WinNsfwScan;
 /// Shared utility for filtering NSFW class names from NudeNet detection results.
 /// </summary>
 public static class NsfwClassifier {
-	private const float GlobalMinScore = 0.625f;
+	private const float GlobalMinScore = 0.05f;
 
 	public static bool IsNsfwClass(string className) {
 		return IsNsfwDetection(className, 1.0f);
