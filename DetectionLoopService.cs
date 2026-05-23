@@ -15,6 +15,9 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly TimeSpan _scanInterval;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
+	// Pre-downscale crops to the model's input size before JPEG encoding.
+	// Matches the resolution the server backend is launched with (640m.onnx @ 640).
+	private const int InferenceSize = 640;
 
 	public event Action<long, NudeNetDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
@@ -24,6 +27,14 @@ public sealed class DetectionLoopService : IDisposable {
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
 	private bool _disposed;
+
+	private long _totalCycleMs;
+	private long _measuredCycleCount;
+
+	/// <summary>Average cycle duration in milliseconds, excluding the first warm-up cycle. Null if fewer than two cycles have completed.</summary>
+	public double? AverageCycleMs => _measuredCycleCount > 0
+		? (double)_totalCycleMs / _measuredCycleCount
+		: null;
 
 	public DetectionLoopService(ScreenCaptureService screenCaptureService, NudeNetClient nudeNetClient, TimeSpan? scanInterval = null) {
 		//AppLogger.Info("DetectionLoopService.ctor entered");
@@ -118,10 +129,10 @@ public sealed class DetectionLoopService : IDisposable {
 						regionTasks.Add(Task.Run(async () => {
 							var slotEncodeSw = Stopwatch.StartNew();
 							byte[] imageBytes;
-							using (var regionBitmap = new SKBitmap(scanSize, scanSize)) {
+							using (var regionBitmap = new SKBitmap(InferenceSize, InferenceSize)) {
 								using (var canvas = new SKCanvas(regionBitmap)) {
 									var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + scanSize, region.OffsetY + scanSize);
-									var dest = new SKRect(0, 0, scanSize, scanSize);
+									var dest = new SKRect(0, 0, InferenceSize, InferenceSize);
 									canvas.DrawBitmap(screenshot, source, dest);
 								}
 								imageBytes = EncodeForTransport(regionBitmap);
@@ -156,17 +167,19 @@ public sealed class DetectionLoopService : IDisposable {
 					encodedBytes = results.Sum(x => x.Bytes);
 					detectMs = detectSw.ElapsedMilliseconds;
 
-					// Consolidate and adjust coordinates
+					// Consolidate and adjust coordinates.
+					// Detection boxes are in InferenceSize×InferenceSize space; scale back to screen pixels first.
+					double tileScale = (double)scanSize / InferenceSize;
 					var allDetections = new List<NudeNetDetection>();
 					foreach (var tileResult in results) {
 						foreach (var detection in tileResult.Detections) {
 							allDetections.Add(new NudeNetDetection(
 								detection.Class,
 								detection.Score,
-								detection.X + tileResult.RegionInfo.OffsetX,
-								detection.Y + tileResult.RegionInfo.OffsetY,
-								detection.Width,
-								detection.Height
+								(int)Math.Round(detection.X * tileScale) + tileResult.RegionInfo.OffsetX,
+								(int)Math.Round(detection.Y * tileScale) + tileResult.RegionInfo.OffsetY,
+								(int)Math.Round(detection.Width * tileScale),
+								(int)Math.Round(detection.Height * tileScale)
 							));
 						}
 					}
@@ -191,6 +204,10 @@ public sealed class DetectionLoopService : IDisposable {
 			}
 			finally {
 				cycleSw.Stop();
+				if (cycleNumber > 1) {
+					_totalCycleMs += cycleSw.ElapsedMilliseconds;
+					_measuredCycleCount++;
+				}
 				var slotBreakdown = results == null
 					? "n/a"
 					: string.Join(" | ", results.Select(r =>

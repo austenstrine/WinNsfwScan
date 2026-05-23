@@ -166,6 +166,9 @@ public partial class App : System.Windows.Application {
 
 		_overlayWindow?.Close();
 		_detectionLoopService?.Dispose();
+		if (_detectionLoopService?.AverageCycleMs is double avg) {
+			AppLogger.Info($"Shutdown avgCycleMs={avg:F1}");
+		}
 		_trayIcon?.Dispose();
 		//AppLogger.Info("App.OnExit completed");
 		base.OnExit(e);
