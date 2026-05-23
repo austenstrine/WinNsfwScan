@@ -130,7 +130,9 @@ public sealed class DetectionLoopService : IDisposable {
 						.ToArray();
 
 					var encodeSw = Stopwatch.StartNew();
-					var rowResults = new List<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>();
+					var detectSw = Stopwatch.StartNew();
+					var rowTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
+
 					foreach (var region in rowRegions) {
 						var slotEncodeSw = Stopwatch.StartNew();
 						using var regionBitmap = new SKBitmap(scanSize, scanSize);
@@ -142,32 +144,34 @@ public sealed class DetectionLoopService : IDisposable {
 						byte[] imageBytes = EncodeForTransport(regionBitmap);
 						slotEncodeSw.Stop();
 
-						NudeNetDetection[] detections;
-						var slotDetectSw = Stopwatch.StartNew();
-						try {
-							detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", 0).ConfigureAwait(false);
-						}
-						catch (Exception ex) {
-							AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
-							detections = Array.Empty<NudeNetDetection>();
-						}
-						slotDetectSw.Stop();
+						rowTasks.Add(Task.Run(async () => {
+							NudeNetDetection[] detections;
+							var slotDetectSw = Stopwatch.StartNew();
+							try {
+								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", 0).ConfigureAwait(false);
+							}
+							catch (Exception ex) {
+								AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
+								detections = Array.Empty<NudeNetDetection>();
+							}
+							slotDetectSw.Stop();
 
-						rowResults.Add((
-							Detections: detections,
-							RegionInfo: region,
-							Bytes: imageBytes.Length,
-							SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
-							SlotDetectMs: slotDetectSw.ElapsedMilliseconds
-						));
+							return (
+								Detections: detections,
+								RegionInfo: region,
+								Bytes: imageBytes.Length,
+								SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
+								SlotDetectMs: slotDetectSw.ElapsedMilliseconds
+							);
+						}));
 					}
 
-					results = rowResults.ToArray();
-
+					results = await Task.WhenAll(rowTasks).ConfigureAwait(false);
+					detectSw.Stop();
 					encodeSw.Stop();
 					encodeMs = results.Sum(x => x.SlotEncodeMs);
 					encodedBytes = results.Sum(x => x.Bytes);
-					detectMs = results.Sum(x => x.SlotDetectMs);
+					detectMs = detectSw.ElapsedMilliseconds;
 
 					// Consolidate and adjust coordinates
 					var allDetections = new List<NudeNetDetection>();

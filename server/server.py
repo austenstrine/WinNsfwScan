@@ -1,11 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from nudenet.nudenet import _read_image, _postprocess
+import asyncio
 import os
 import sys
 import argparse
 import traceback
 import socket
 import datetime
+import threading
 import uvicorn
 import onnxruntime as ort
 
@@ -35,6 +37,11 @@ def write_server_log(message):
     with open(SERVER_LOG_FILE, 'a', encoding='utf-8') as f:
         f.write(f'{timestamp} {message}\n')
 
+
+@app.on_event('startup')
+async def on_startup():
+    app.state.detect_semaphore = asyncio.Semaphore(max(1, args.detect_concurrency))
+
 def get_base_path():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
@@ -45,6 +52,7 @@ def parse_args():
     parser.add_argument('--model', type=str, default='640m.onnx', help='Model filename (relative to exe dir)')
     parser.add_argument('--resolution', type=int, default=640, help='Inference resolution')
     parser.add_argument('--port', type=int, default=0, help='Server port (0 = auto-select)')
+    parser.add_argument('--detect-concurrency', type=int, default=3, help='Maximum concurrent detect requests')
     parser.add_argument(
         '--execution-provider',
         type=str,
@@ -65,6 +73,7 @@ class RuntimeNudeDetector:
         self.onnx_session = ort.InferenceSession(model_path, providers=self.providers)
         self.active_providers = self.onnx_session.get_providers()
         self.input_name = self.onnx_session.get_inputs()[0].name
+        self.session_lock = threading.Lock()
 
     def _resolve_providers(self, execution_provider):
         available = ort.get_available_providers()
@@ -99,7 +108,8 @@ class RuntimeNudeDetector:
             image_original_height,
         ) = _read_image(image_bytes, self.input_width)
 
-        outputs = self.onnx_session.run(None, {self.input_name: preprocessed_image})
+        with self.session_lock:
+            outputs = self.onnx_session.run(None, {self.input_name: preprocessed_image})
 
         return _postprocess(
             outputs,
@@ -125,14 +135,16 @@ detector = RuntimeNudeDetector(
 write_server_log(
     f"startup model={args.model} resolution={args.resolution} providerPreference={args.execution_provider} "
     f"availableProviders={available_providers} requestedProviders={detector.providers} activeProviders={detector.active_providers} "
-    f"gpuInUse={any(p in detector.active_providers for p in ['DmlExecutionProvider', 'CUDAExecutionProvider'])}"
+    f"gpuInUse={any(p in detector.active_providers for p in ['DmlExecutionProvider', 'CUDAExecutionProvider'])} "
+    f"detectConcurrency={args.detect_concurrency}"
 )
 
 @app.post("/detect")
 async def detect(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        detections = detector.detect(contents)
+        async with app.state.detect_semaphore:
+            detections = await asyncio.to_thread(detector.detect, contents)
         return {"detections": detections}
     except Exception as e:
         write_server_log(f"error /detect: {str(e)}")
