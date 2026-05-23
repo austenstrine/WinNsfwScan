@@ -55,7 +55,7 @@
 	</ItemGroup>
 
 	<Target Name="GenerateBackendConfig" BeforeTargets="Build">
-		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --name server --distpath $(BackendProjectDir) --workpath $(ProjectDir)build --specpath $(BackendProjectDir) server\server.py" WorkingDirectory="$(ProjectDir)" />
+		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --hidden-import onnxruntime --hidden-import onnxruntime.capi._pybind_state --name server --distpath $(BackendProjectDir) --workpath $(ProjectDir)build --specpath $(BackendProjectDir) server\server.py" WorkingDirectory="$(ProjectDir)" />
 
 		<WriteLinesToFile File="$(BackendProjectDir)\backend.json" Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }" Overwrite="true" />
 
