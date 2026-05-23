@@ -4,7 +4,6 @@ import datetime
 import os
 import socket
 import sys
-import threading
 import traceback
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -22,31 +21,30 @@ def get_base_path():
 
 class ServerRuntimeLogger:
     def __init__(self, base_path):
-        self._log_file = self._init_log_file(base_path)
+        self._log_path = self._build_log_path(base_path)
 
-    def _get_log_dir(self, base_path):
+    def _build_log_path(self, base_path):
         local_app_data = os.getenv('LOCALAPPDATA')
-        if local_app_data:
-            return os.path.join(local_app_data, 'WinNsfwScan', 'logs')
-        return os.path.join(base_path, 'logs')
-
-    def _init_log_file(self, base_path):
-        log_dir = self._get_log_dir(base_path)
+        log_dir = (
+            os.path.join(local_app_data, 'WinNsfwScan', 'logs')
+            if local_app_data
+            else os.path.join(base_path, 'logs')
+        )
         os.makedirs(log_dir, exist_ok=True)
         stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
         return os.path.join(log_dir, f'server-runtime-{stamp}.log')
 
     def write(self, message):
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        with open(self._log_file, 'a', encoding='utf-8') as f:
-            f.write(f'{timestamp} {message}\n')
+        line = f'{timestamp} {message}'
+        with open(self._log_path, 'a', encoding='utf-8') as f:
+            f.write(line + '\n')
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', type=str, default='640m.onnx', help='Model filename (relative to exe dir)')
     parser.add_argument('--resolution', type=int, default=640, help='Inference resolution')
     parser.add_argument('--port', type=int, default=0, help='Server port (0 = auto-select)')
-    parser.add_argument('--detect-concurrency', type=int, default=1, help='Maximum concurrent detect requests')
     parser.add_argument(
         '--execution-provider',
         type=str,
@@ -67,7 +65,6 @@ class RuntimeNudeDetector:
         self.onnx_session = ort.InferenceSession(model_path, providers=self.providers)
         self.active_providers = self.onnx_session.get_providers()
         self.input_name = self.onnx_session.get_inputs()[0].name
-        self.session_lock = threading.Lock()
 
     def _resolve_providers(self, execution_provider):
         available = ort.get_available_providers()
@@ -102,8 +99,7 @@ class RuntimeNudeDetector:
             image_original_height,
         ) = _read_image(image_bytes, self.input_width)
 
-        with self.session_lock:
-            outputs = self.onnx_session.run(None, {self.input_name: preprocessed_image})
+        outputs = self.onnx_session.run(None, {self.input_name: preprocessed_image})
 
         return _postprocess(
             outputs,
@@ -118,10 +114,6 @@ class RuntimeNudeDetector:
         )
 
 
-@app.on_event('startup')
-async def on_startup():
-    app.state.detect_semaphore = asyncio.Semaphore(max(1, args.detect_concurrency))
-
 args = parse_args()
 base_path = get_base_path()
 logger = ServerRuntimeLogger(base_path)
@@ -135,16 +127,18 @@ detector = RuntimeNudeDetector(
 logger.write(
     f"startup model={args.model} resolution={args.resolution} providerPreference={args.execution_provider} "
     f"availableProviders={available_providers} requestedProviders={detector.providers} activeProviders={detector.active_providers} "
-    f"gpuInUse={any(p in detector.active_providers for p in ['DmlExecutionProvider', 'CUDAExecutionProvider'])} "
-    f"detectConcurrency={args.detect_concurrency}"
+    f"gpuInUse={any(p in detector.active_providers for p in ['DmlExecutionProvider', 'CUDAExecutionProvider'])}"
 )
+
+@app.post("/shutdown")
+async def shutdown():
+    os._exit(0)
 
 @app.post("/detect")
 async def detect(file: UploadFile = File(...)):
     try:
         contents = await file.read()
-        async with app.state.detect_semaphore:
-            detections = await asyncio.to_thread(detector.detect, contents)
+        detections = await asyncio.to_thread(detector.detect, contents)
         return {"detections": detections}
     except Exception as e:
         logger.write(f"error /detect: {str(e)}")

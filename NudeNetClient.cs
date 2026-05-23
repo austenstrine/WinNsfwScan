@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace WinNsfwScan;
@@ -21,7 +22,6 @@ public class NudeNetClient : IDisposable {
 	private readonly List<Process> _processes = new();
 	private readonly List<int> _ports = new();
 	private readonly HttpClient _httpClient;
-	private int _currentServerIndex = 0;
 	private bool _disposed = false;
 
 	public NudeNetClient() {
@@ -88,24 +88,12 @@ public class NudeNetClient : IDisposable {
 		Dispose();
 	}
 
-	public async Task<bool> IsNsfwAsync(string imagePath) {
-		//AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
-		var fileBytes = await File.ReadAllBytesAsync(imagePath);
-		var detections = await DetectAsync(fileBytes, Path.GetFileName(imagePath));
-		return detections.Any(d => NsfwClassifier.IsNsfwDetection(d.Class, d.Score));
-	}
-
 	/// <summary>
-	/// Detect NSFW content in an image using a specific server (round-robin by default).
+	/// Detect NSFW content in an image on the given server.
 	/// </summary>
-	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName, int? serverIndex = null) {
-		// Use round-robin if no specific server requested
-		if (serverIndex == null) {
-			serverIndex = _currentServerIndex;
-			_currentServerIndex = (_currentServerIndex + 1) % ServerConfigs.Length;
-		}
+	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName, int serverIndex) {
 
-		int port = _ports[serverIndex.Value];
+		int port = _ports[serverIndex];
 
 		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length} server={serverIndex}");
 		using var content = new MultipartFormDataContent();
@@ -159,11 +147,22 @@ public class NudeNetClient : IDisposable {
 		if (_disposed) return;
 		_disposed = true;
 
+		// Ask each server to flush its logs and exit before we force-kill.
+		for (int i = 0; i < _processes.Count; i++) {
+			if (_processes[i] == null || _processes[i].HasExited) continue;
+			try {
+				using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+				_httpClient.PostAsync($"http://127.0.0.1:{_ports[i]}/shutdown", null, cts.Token).GetAwaiter().GetResult();
+			}
+			catch { }
+		}
+
 		try {
 			foreach(var process in _processes) {
 				if (process != null && !process.HasExited) {
-					process.Kill(entireProcessTree: true);
-					process.WaitForExit(2000);
+					process.WaitForExit(3000);
+					if (!process.HasExited)
+						process.Kill(entireProcessTree: true);
 				}
 				process?.Dispose();
 			}

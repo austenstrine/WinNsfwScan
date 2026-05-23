@@ -9,9 +9,7 @@ public static class AppLogger {
 
 	public static string LogFilePath => _logFilePath;
 
-	public static void Info(string message) {
-		Write("INFO", message);
-	}
+	public static void Info(string message) => Write("INFO", message);
 
 	public static void Error(string message, Exception? ex = null) {
 		if(ex == null) {
@@ -30,9 +28,7 @@ public static class AppLogger {
 				Directory.CreateDirectory(Path.GetDirectoryName(_logFilePath)!);
 				File.AppendAllText(_logFilePath, line + Environment.NewLine);
 			}
-			catch {
-				// Swallow logging failures so diagnostics never crash the app.
-			}
+			catch { }
 		}
 
 		Console.WriteLine(line);

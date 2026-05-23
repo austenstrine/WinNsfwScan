@@ -170,7 +170,7 @@ public partial class App : System.Windows.Application {
 			AppLogger.Info($"Shutdown avgCycleMs={avg:F1}");
 		}
 		_trayIcon?.Dispose();
-		//AppLogger.Info("App.OnExit completed");
+		//AppLogger.Info("App.OnExit completed")
 		base.OnExit(e);
 	}
 }

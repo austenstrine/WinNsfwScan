@@ -121,7 +121,6 @@ public sealed class DetectionLoopService : IDisposable {
 						new ScanRegionInfo(maxX, midY, "right"),
 					};
 
-					var encodeSw = Stopwatch.StartNew();
 					var detectSw = Stopwatch.StartNew();
 					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
@@ -164,7 +163,6 @@ public sealed class DetectionLoopService : IDisposable {
 
 					results = await Task.WhenAll(regionTasks).ConfigureAwait(false);
 					detectSw.Stop();
-					encodeSw.Stop();
 					encodeMs = results.Sum(x => x.SlotEncodeMs);
 					encodedBytes = results.Sum(x => x.Bytes);
 					detectMs = detectSw.ElapsedMilliseconds;
