@@ -115,17 +115,19 @@ public sealed class DetectionLoopService : IDisposable {
 					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
 					foreach (var region in scanRegions) {
-						var slotEncodeSw = Stopwatch.StartNew();
-						using var regionBitmap = new SKBitmap(scanSize, scanSize);
-						using (var canvas = new SKCanvas(regionBitmap)) {
-							var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + scanSize, region.OffsetY + scanSize);
-							var dest = new SKRect(0, 0, scanSize, scanSize);
-							canvas.DrawBitmap(screenshot, source, dest);
-						}
-						byte[] imageBytes = EncodeForTransport(regionBitmap);
-						slotEncodeSw.Stop();
-
 						regionTasks.Add(Task.Run(async () => {
+							var slotEncodeSw = Stopwatch.StartNew();
+							byte[] imageBytes;
+							using (var regionBitmap = new SKBitmap(scanSize, scanSize)) {
+								using (var canvas = new SKCanvas(regionBitmap)) {
+									var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + scanSize, region.OffsetY + scanSize);
+									var dest = new SKRect(0, 0, scanSize, scanSize);
+									canvas.DrawBitmap(screenshot, source, dest);
+								}
+								imageBytes = EncodeForTransport(regionBitmap);
+							}
+							slotEncodeSw.Stop();
+
 							NudeNetDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
