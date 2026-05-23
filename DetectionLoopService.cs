@@ -13,9 +13,9 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
-	private const int TargetScanSize = 640;
+	private const int TargetScanSize = 320;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
-	private const int TransportImageQuality = 90;
+	private const int TransportImageQuality = 80;
 
 	public event Action<NudeNetDetection[]>? NsfwDetected;
 
@@ -74,7 +74,7 @@ public sealed class DetectionLoopService : IDisposable {
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync started");
 		long cycleNumber = 0;
-		int nextRegionIndex = 0;
+		int nextRowIndex = 0;
 
 		while(!cancellationToken.IsCancellationRequested) {
 			cycleNumber++;
@@ -83,11 +83,12 @@ public sealed class DetectionLoopService : IDisposable {
 			long encodeMs = 0;
 			long detectMs = 0;
 			int encodedBytes = 0;
+			bool hadScreenshot = false;
 			int width = 0;
 			int height = 0;
 			NudeNetDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
-			(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)? result = null;
+			(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -96,67 +97,91 @@ public sealed class DetectionLoopService : IDisposable {
 				captureMs = captureSw.ElapsedMilliseconds;
 
 				if(screenshot != null) {
+					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
 					int scanSize = Math.Min(TargetScanSize, Math.Min(width, height));
+					int maxX = Math.Max(0, width - scanSize);
+					int maxY = Math.Max(0, height - scanSize);
 
-					var scanRegions = new[] {
-						new ScanRegionInfo(0, 0, "top-left"),
-						new ScanRegionInfo(Math.Max(0, width - scanSize), 0, "top-right"),
-						new ScanRegionInfo(0, Math.Max(0, height - scanSize), "bottom-left"),
-						new ScanRegionInfo(Math.Max(0, width - scanSize), Math.Max(0, height - scanSize), "bottom-right"),
-						new ScanRegionInfo(Math.Max(0, (width - scanSize) / 2), Math.Max(0, (height - scanSize) / 2), "center"),
+					int[] xPositions = {
+						0,
+						maxX / 4,
+						maxX / 2,
+						(3 * maxX) / 4,
+						maxX,
 					};
 
-					var activeRegion = scanRegions[nextRegionIndex];
-					nextRegionIndex = (nextRegionIndex + 1) % scanRegions.Length;
+					int[] yPositions = {
+						0,
+						maxY / 2,
+						maxY,
+					};
+
+					string[] rowNames = { "top", "center", "bottom" };
+					string[] colNames = { "left", "center-left", "center", "center-right", "right" };
+
+					int activeRowIndex = nextRowIndex;
+					nextRowIndex = (nextRowIndex + 1) % rowNames.Length;
+					int activeRowY = yPositions[activeRowIndex];
+
+					var rowRegions = xPositions
+						.Select((x, i) => new ScanRegionInfo(x, activeRowY, $"{rowNames[activeRowIndex]}-{colNames[i]}"))
+						.ToArray();
 
 					var encodeSw = Stopwatch.StartNew();
-					var slotEncodeSw = Stopwatch.StartNew();
-					using var regionBitmap = new SKBitmap(scanSize, scanSize);
-					using (var canvas = new SKCanvas(regionBitmap)) {
-						var source = new SKRect(activeRegion.OffsetX, activeRegion.OffsetY, activeRegion.OffsetX + scanSize, activeRegion.OffsetY + scanSize);
-						var dest = new SKRect(0, 0, scanSize, scanSize);
-						canvas.DrawBitmap(screenshot, source, dest);
-					}
-					byte[] imageBytes = EncodeForTransport(regionBitmap);
-					slotEncodeSw.Stop();
+					var rowResults = new List<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>();
+					foreach (var region in rowRegions) {
+						var slotEncodeSw = Stopwatch.StartNew();
+						using var regionBitmap = new SKBitmap(scanSize, scanSize);
+						using (var canvas = new SKCanvas(regionBitmap)) {
+							var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + scanSize, region.OffsetY + scanSize);
+							var dest = new SKRect(0, 0, scanSize, scanSize);
+							canvas.DrawBitmap(screenshot, source, dest);
+						}
+						byte[] imageBytes = EncodeForTransport(regionBitmap);
+						slotEncodeSw.Stop();
 
-					NudeNetDetection[] detections;
-					var slotDetectSw = Stopwatch.StartNew();
-					try {
-						detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{activeRegion.Name}.jpg", 0).ConfigureAwait(false);
-					}
-					catch (Exception ex) {
-						AppLogger.Error($"DetectionLoopService detect error for {activeRegion.Name}", ex);
-						detections = Array.Empty<NudeNetDetection>();
-					}
-					slotDetectSw.Stop();
+						NudeNetDetection[] detections;
+						var slotDetectSw = Stopwatch.StartNew();
+						try {
+							detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", 0).ConfigureAwait(false);
+						}
+						catch (Exception ex) {
+							AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
+							detections = Array.Empty<NudeNetDetection>();
+						}
+						slotDetectSw.Stop();
 
-					result = (
-						Detections: detections,
-						RegionInfo: activeRegion,
-						Bytes: imageBytes.Length,
-						SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
-						SlotDetectMs: slotDetectSw.ElapsedMilliseconds
-					);
+						rowResults.Add((
+							Detections: detections,
+							RegionInfo: region,
+							Bytes: imageBytes.Length,
+							SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
+							SlotDetectMs: slotDetectSw.ElapsedMilliseconds
+						));
+					}
+
+					results = rowResults.ToArray();
 
 					encodeSw.Stop();
-					encodeMs = encodeSw.ElapsedMilliseconds;
-					encodedBytes = result.Value.Bytes;
-					detectMs = result.Value.SlotDetectMs;
+					encodeMs = results.Sum(x => x.SlotEncodeMs);
+					encodedBytes = results.Sum(x => x.Bytes);
+					detectMs = results.Sum(x => x.SlotDetectMs);
 
 					// Consolidate and adjust coordinates
 					var allDetections = new List<NudeNetDetection>();
-					foreach (var detection in result.Value.Detections) {
-						allDetections.Add(new NudeNetDetection(
-							detection.Class,
-							detection.Score,
-							detection.X + result.Value.RegionInfo.OffsetX,
-							detection.Y + result.Value.RegionInfo.OffsetY,
-							detection.Width,
-							detection.Height
-						));
+					foreach (var tileResult in results) {
+						foreach (var detection in tileResult.Detections) {
+							allDetections.Add(new NudeNetDetection(
+								detection.Class,
+								detection.Score,
+								detection.X + tileResult.RegionInfo.OffsetX,
+								detection.Y + tileResult.RegionInfo.OffsetY,
+								detection.Width,
+								detection.Height
+							));
+						}
 					}
 
 					allDetectionCount = allDetections.Count;
@@ -179,7 +204,13 @@ public sealed class DetectionLoopService : IDisposable {
 			}
 			finally {
 				cycleSw.Stop();
-				// Benchmark cycle logs intentionally disabled while tuning thresholds.
+				var slotBreakdown = results == null
+					? "n/a"
+					: string.Join(" | ", results.Select(r =>
+						$"{r.RegionInfo.Name}: encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
+				AppLogger.Info(
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=jpeg quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
+				);
 			}
 
 			await Task.Delay(_scanInterval, cancellationToken).ConfigureAwait(false);
