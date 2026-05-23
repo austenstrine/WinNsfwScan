@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -90,17 +91,18 @@ public class NudeNetClient : IDisposable {
 
 	/// <summary>
 	/// Detect NSFW content in an image on the given server.
+	/// Sends raw JPEG bytes as application/octet-stream to avoid multipart parsing overhead.
 	/// </summary>
 	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName, int serverIndex) {
 
 		int port = _ports[serverIndex];
 
 		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length} server={serverIndex}");
-		using var content = new MultipartFormDataContent();
-		content.Add(new ByteArrayContent(imageBytes), "file", fileName);
+		using var content = new ByteArrayContent(imageBytes);
+		content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
 
 		var requestSw = Stopwatch.StartNew();
-		var response = await _httpClient.PostAsync($"http://127.0.0.1:{port}/detect", content);
+		var response = await _httpClient.PostAsync($"http://127.0.0.1:{port}/detect_raw", content);
 		requestSw.Stop();
 		//AppLogger.Info($"NudeNetClient.DetectAsync http={requestSw.ElapsedMilliseconds}ms status={(int)response.StatusCode} server={serverIndex}");
 

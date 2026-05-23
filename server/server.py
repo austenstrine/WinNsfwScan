@@ -6,7 +6,7 @@ import socket
 import sys
 import traceback
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from nudenet.nudenet import _postprocess, _read_image
 import uvicorn
 import onnxruntime as ort
@@ -142,6 +142,21 @@ async def detect(file: UploadFile = File(...)):
         return {"detections": detections}
     except Exception as e:
         logger.write(f"error /detect: {str(e)}")
+        logger.write(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/detect_raw")
+async def detect_raw(request: Request):
+    try:
+        contents = await request.body()
+        if not contents:
+            raise HTTPException(status_code=400, detail="Request body is empty")
+        detections = await asyncio.to_thread(detector.detect, contents)
+        return {"detections": detections}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.write(f"error /detect_raw: {str(e)}")
         logger.write(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
