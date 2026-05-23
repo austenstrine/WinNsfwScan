@@ -15,14 +15,16 @@
 	<PropertyGroup>
 		<BackendExecutable Condition="'$(OS)' == 'Windows_NT'">server.exe</BackendExecutable>
 		<BackendExecutable Condition="'$(OS)' != 'Windows_NT'">server</BackendExecutable>
+		<BackendProjectDir>$(ProjectDir)server</BackendProjectDir>
 
 		<VenvPython Condition="'$(OS)' == 'Windows_NT'">$(ProjectDir)venv\Scripts\python.exe</VenvPython>
 		<VenvPython Condition="'$(OS)' != 'Windows_NT'">$(ProjectDir)venv/bin/python</VenvPython>
 	</PropertyGroup>
 
 	<ItemGroup>
-		<Content Include="backend.json">
+		<Content Include="server\backend.json">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
 		</Content>
 	</ItemGroup>
 
@@ -53,11 +55,29 @@
 	</ItemGroup>
 
 	<Target Name="GenerateBackendConfig" BeforeTargets="Build">
-		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --name server --distpath $(ProjectDir) --workpath $(ProjectDir)build --specpath $(ProjectDir) server.py" WorkingDirectory="$(ProjectDir)" />
+		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --name server --distpath $(BackendProjectDir) --workpath $(ProjectDir)build --specpath $(BackendProjectDir) server\server.py" WorkingDirectory="$(ProjectDir)" />
 
-		<WriteLinesToFile File="$(ProjectDir)backend.json" Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }" Overwrite="true" />
+		<WriteLinesToFile File="$(BackendProjectDir)\backend.json" Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }" Overwrite="true" />
 
 		<Message Text="Generated backend.json with $(BackendExecutable)" Importance="high" />
+	</Target>
+
+	<Target Name="CopyBackendArtifactsToOutput" AfterTargets="Build">
+		<ItemGroup>
+			<BackendArtifacts Include="$(BackendProjectDir)\$(BackendExecutable)" Condition="Exists('$(BackendProjectDir)\$(BackendExecutable)')" />
+			<BackendArtifacts Include="$(BackendProjectDir)\*.onnx" />
+		</ItemGroup>
+
+		<Copy SourceFiles="@(BackendArtifacts)" DestinationFolder="$(OutputPath)server\" SkipUnchangedFiles="true" />
+	</Target>
+
+	<Target Name="CopyBackendArtifactsToPublish" AfterTargets="Publish">
+		<ItemGroup>
+			<BackendArtifactsPublish Include="$(BackendProjectDir)\$(BackendExecutable)" Condition="Exists('$(BackendProjectDir)\$(BackendExecutable)')" />
+			<BackendArtifactsPublish Include="$(BackendProjectDir)\*.onnx" />
+		</ItemGroup>
+
+		<Copy SourceFiles="@(BackendArtifactsPublish)" DestinationFolder="$(PublishDir)server\" SkipUnchangedFiles="true" />
 	</Target>
 
 </Project>

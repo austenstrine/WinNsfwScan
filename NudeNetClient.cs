@@ -10,12 +10,9 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	// All 4 servers use 320n for fast quadrant detection
+	// Single high-accuracy server for 640x640 sequential region scans.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
+		("640m.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();
@@ -27,16 +24,14 @@ public class NudeNetClient : IDisposable {
 	public NudeNetClient() {
 		//AppLogger.Info("NudeNetClient.ctor entered");
 		// Read config
-		string configPath = Path.Combine(AppContext.BaseDirectory, "backend.json");
+		string configPath = Path.Combine(AppContext.BaseDirectory, "server", "backend.json");
 		//AppLogger.Info($"NudeNetClient.ctor reading config at {configPath}");
 		string json = File.ReadAllText(configPath);
 		using var doc = JsonDocument.Parse(json);
-		// Resolve server executable relative to the app's base directory so it works
-		// regardless of working directory (shortcuts, launchers, etc.)
-		string serverExecutable = Path.Combine(
-			AppContext.BaseDirectory,
-			doc.RootElement.GetProperty("ServerExecutable").GetString()!
-		);
+		// Resolve server executable relative to backend config location.
+		string configuredServerExecutable = doc.RootElement.GetProperty("ServerExecutable").GetString()!;
+		string configDirectory = Path.GetDirectoryName(configPath)!;
+		string serverExecutable = Path.GetFullPath(Path.Combine(configDirectory, configuredServerExecutable));
 		//AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
 		// Spawn servers with per-slot model configuration
@@ -128,6 +123,7 @@ public class NudeNetClient : IDisposable {
 		var detectionsEl = doc.RootElement.GetProperty("detections");
 
 		var result = new List<NudeNetDetection>();
+		var nsfwRawDetections = new List<string>();
 		foreach(var detection in detectionsEl.EnumerateArray()) {
 			string className = detection.GetProperty("class").GetString()!;
 			float score = (float)detection.GetProperty("score").GetDouble();
@@ -137,9 +133,19 @@ public class NudeNetClient : IDisposable {
 			int w = (int)box[2].GetDouble();
 			int h = (int)box[3].GetDouble();
 			result.Add(new NudeNetDetection(className, score, x, y, w, h));
+
+			if (NsfwClassifier.IsNsfwClass(className)) {
+				nsfwRawDetections.Add(detection.GetRawText());
+			}
 		}
 
 		parseSw.Stop();
+
+		if (nsfwRawDetections.Count > 0) {
+			string nsfwJson = "[" + string.Join(",", nsfwRawDetections) + "]";
+			AppLogger.Info($"NudeNet NSFW positives server={serverIndex} file={fileName} detections={nsfwJson}");
+		}
+
 		//AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => NsfwClassifier.IsNsfwClass(d.Class))}");
 
 		return result.ToArray();

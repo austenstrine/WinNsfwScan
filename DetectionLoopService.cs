@@ -13,12 +13,13 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NudeNetClient _nudeNetClient;
 	private readonly TimeSpan _scanInterval;
+	private const int TargetScanSize = 640;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 90;
 
 	public event Action<NudeNetDetection[]>? NsfwDetected;
 
-	private record QuadrantInfo(int OffsetX, int OffsetY, string Name);
+	private record ScanRegionInfo(int OffsetX, int OffsetY, string Name);
 
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
@@ -73,6 +74,7 @@ public sealed class DetectionLoopService : IDisposable {
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync entered");
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync started");
 		long cycleNumber = 0;
+		int nextRegionIndex = 0;
 
 		while(!cancellationToken.IsCancellationRequested) {
 			cycleNumber++;
@@ -81,13 +83,11 @@ public sealed class DetectionLoopService : IDisposable {
 			long encodeMs = 0;
 			long detectMs = 0;
 			int encodedBytes = 0;
-			string encodedFormat = "none";
 			int width = 0;
 			int height = 0;
-			bool hadScreenshot = false;
 			NudeNetDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
-			(NudeNetDetection[] Detections, QuadrantInfo QuadInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
+			(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)? result = null;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -96,79 +96,67 @@ public sealed class DetectionLoopService : IDisposable {
 				captureMs = captureSw.ElapsedMilliseconds;
 
 				if(screenshot != null) {
-					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
+					int scanSize = Math.Min(TargetScanSize, Math.Min(width, height));
 
-					// 4 quadrant tiles covering the full screen
-					var quadrantInfos = new[] {
-						new QuadrantInfo(0,          0,           "quad-tl"),
-						new QuadrantInfo(width / 2,  0,           "quad-tr"),
-						new QuadrantInfo(0,          height / 2,  "quad-bl"),
-						new QuadrantInfo(width / 2,  height / 2,  "quad-br"),
+					var scanRegions = new[] {
+						new ScanRegionInfo(0, 0, "top-left"),
+						new ScanRegionInfo(Math.Max(0, width - scanSize), 0, "top-right"),
+						new ScanRegionInfo(0, Math.Max(0, height - scanSize), "bottom-left"),
+						new ScanRegionInfo(Math.Max(0, width - scanSize), Math.Max(0, height - scanSize), "bottom-right"),
+						new ScanRegionInfo(Math.Max(0, (width - scanSize) / 2), Math.Max(0, (height - scanSize) / 2), "center"),
 					};
 
-					int quadWidth = width / 2;
-					int quadHeight = height / 2;
+					var activeRegion = scanRegions[nextRegionIndex];
+					nextRegionIndex = (nextRegionIndex + 1) % scanRegions.Length;
 
 					var encodeSw = Stopwatch.StartNew();
+					var slotEncodeSw = Stopwatch.StartNew();
+					using var regionBitmap = new SKBitmap(scanSize, scanSize);
+					using (var canvas = new SKCanvas(regionBitmap)) {
+						var source = new SKRect(activeRegion.OffsetX, activeRegion.OffsetY, activeRegion.OffsetX + scanSize, activeRegion.OffsetY + scanSize);
+						var dest = new SKRect(0, 0, scanSize, scanSize);
+						canvas.DrawBitmap(screenshot, source, dest);
+					}
+					byte[] imageBytes = EncodeForTransport(regionBitmap);
+					slotEncodeSw.Stop();
 
-					// Encode and detect all 4 quadrants in parallel
-					var encodeAndDetectTasks = quadrantInfos
-						.Select((info, idx) => Task.Run(async () => {
-							var slotEncodeSw = Stopwatch.StartNew();
-							using var quadBitmap = new SKBitmap(quadWidth, quadHeight);
-							using (var canvas = new SKCanvas(quadBitmap)) {
-								var source = new SKRect(info.OffsetX, info.OffsetY, info.OffsetX + quadWidth, info.OffsetY + quadHeight);
-								var dest = new SKRect(0, 0, quadWidth, quadHeight);
-								canvas.DrawBitmap(screenshot, source, dest);
-							}
-							byte[] imageBytes = EncodeForTransport(quadBitmap);
-							slotEncodeSw.Stop();
+					NudeNetDetection[] detections;
+					var slotDetectSw = Stopwatch.StartNew();
+					try {
+						detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{activeRegion.Name}.jpg", 0).ConfigureAwait(false);
+					}
+					catch (Exception ex) {
+						AppLogger.Error($"DetectionLoopService detect error for {activeRegion.Name}", ex);
+						detections = Array.Empty<NudeNetDetection>();
+					}
+					slotDetectSw.Stop();
 
-							// Immediately detect after encoding (each on its own thread)
-							NudeNetDetection[] detections;
-							var slotDetectSw = Stopwatch.StartNew();
-							try {
-								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{info.Name}.jpg", idx).ConfigureAwait(false);
-							}
-							catch (Exception ex) {
-								AppLogger.Error($"DetectionLoopService parallel detect error for {info.Name} server {idx}", ex);
-								detections = Array.Empty<NudeNetDetection>();
-							}
-							slotDetectSw.Stop();
-
-							return (
-								Detections: detections,
-								QuadInfo: info,
-								Bytes: imageBytes.Length,
-								SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
-								SlotDetectMs: slotDetectSw.ElapsedMilliseconds
-							);
-						}))
-						.ToList();
-
-					results = await Task.WhenAll(encodeAndDetectTasks).ConfigureAwait(false);
+					result = (
+						Detections: detections,
+						RegionInfo: activeRegion,
+						Bytes: imageBytes.Length,
+						SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
+						SlotDetectMs: slotDetectSw.ElapsedMilliseconds
+					);
 
 					encodeSw.Stop();
 					encodeMs = encodeSw.ElapsedMilliseconds;
-					encodedBytes = results.Sum(x => x.Bytes);
-					encodedFormat = "jpeg";
-					detectMs = results.Max(x => x.SlotDetectMs);
+					encodedBytes = result.Value.Bytes;
+					detectMs = result.Value.SlotDetectMs;
 
 					// Consolidate and adjust coordinates
 					var allDetections = new List<NudeNetDetection>();
-					foreach (var result in results) {
-						foreach (var detection in result.Detections) {
-							allDetections.Add(new NudeNetDetection(
-								detection.Class,
-								detection.Score,
-								detection.X + result.QuadInfo.OffsetX,
-								detection.Y + result.QuadInfo.OffsetY,
-								detection.Width,
-								detection.Height
-							));
-						}
+					foreach (var detection in result.Value.Detections) {
+						allDetections.Add(new NudeNetDetection(
+							detection.Class,
+							detection.Score,
+							detection.X + result.Value.RegionInfo.OffsetX,
+							detection.Y + result.Value.RegionInfo.OffsetY,
+							detection.Width,
+							detection.Height
+						));
 					}
 
 					allDetectionCount = allDetections.Count;
@@ -177,7 +165,7 @@ public sealed class DetectionLoopService : IDisposable {
 					//AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
 
 					if(nsfwDetections.Length > 0) {
-						//AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 5 detection passes");
+						//AppLogger.Info($"DetectionLoopService.RunLoopAsync NSFW detected {nsfwDetections.Length} regions from 1 detection pass");
 						NsfwDetected?.Invoke(nsfwDetections);
 					}
 				}
@@ -191,12 +179,7 @@ public sealed class DetectionLoopService : IDisposable {
 			}
 			finally {
 				cycleSw.Stop();
-				var slotBreakdown = results == null ? "n/a" :
-					string.Join(" | ", results.Select(r =>
-						$"{r.QuadInfo.Name}: encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
-				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms slowestDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format={encodedFormat} quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
-				);
+				// Benchmark cycle logs intentionally disabled while tuning thresholds.
 			}
 
 			await Task.Delay(_scanInterval, cancellationToken).ConfigureAwait(false);
