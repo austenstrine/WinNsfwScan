@@ -125,7 +125,9 @@ public sealed class DetectionLoopService : IDisposable {
 					var detectSw = Stopwatch.StartNew();
 					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
-					foreach (var region in scanRegions) {
+					for (int tileIndex = 0; tileIndex < scanRegions.Length; tileIndex++) {
+						var region = scanRegions[tileIndex];
+						int serverIndex = tileIndex;
 						regionTasks.Add(Task.Run(async () => {
 							var slotEncodeSw = Stopwatch.StartNew();
 							byte[] imageBytes;
@@ -142,7 +144,7 @@ public sealed class DetectionLoopService : IDisposable {
 							NudeNetDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", 0).ConfigureAwait(false);
+								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", serverIndex).ConfigureAwait(false);
 							}
 							catch (Exception ex) {
 								AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);

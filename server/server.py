@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument('--model', type=str, default='640m.onnx', help='Model filename (relative to exe dir)')
     parser.add_argument('--resolution', type=int, default=640, help='Inference resolution')
     parser.add_argument('--port', type=int, default=0, help='Server port (0 = auto-select)')
-    parser.add_argument('--detect-concurrency', type=int, default=3, help='Maximum concurrent detect requests')
+    parser.add_argument('--detect-concurrency', type=int, default=1, help='Maximum concurrent detect requests')
     parser.add_argument(
         '--execution-provider',
         type=str,

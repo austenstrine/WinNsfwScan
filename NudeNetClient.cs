@@ -10,8 +10,11 @@ using System.Threading.Tasks;
 namespace WinNsfwScan;
 
 public class NudeNetClient : IDisposable {
-	// Single server for concurrent hxh left+center+right scans (server downsizes to 640).
+	// One server process per tile so each has its own isolated DML device and can
+	// run inference in parallel without GPU device contention.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
+		("640m.onnx", 640),
+		("640m.onnx", 640),
 		("640m.onnx", 640),
 	};
 
