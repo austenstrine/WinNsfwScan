@@ -160,7 +160,7 @@ public sealed class DetectionLoopService : IDisposable {
 					}
 
 					allDetectionCount = allDetections.Count;
-					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwClass(d.Class)).ToArray();
+					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwDetection(d.Class, d.Score)).ToArray();
 
 					//AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
 

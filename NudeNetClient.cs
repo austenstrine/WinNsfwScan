@@ -89,7 +89,7 @@ public class NudeNetClient : IDisposable {
 		//AppLogger.Info("NudeNetClient.IsNsfwAsync(path) entered");
 		var fileBytes = await File.ReadAllBytesAsync(imagePath);
 		var detections = await DetectAsync(fileBytes, Path.GetFileName(imagePath));
-		return detections.Any(d => NsfwClassifier.IsNsfwClass(d.Class));
+		return detections.Any(d => NsfwClassifier.IsNsfwDetection(d.Class, d.Score));
 	}
 
 	/// <summary>
@@ -134,7 +134,7 @@ public class NudeNetClient : IDisposable {
 			int h = (int)box[3].GetDouble();
 			result.Add(new NudeNetDetection(className, score, x, y, w, h));
 
-			if (NsfwClassifier.IsNsfwClass(className)) {
+			if (NsfwClassifier.IsNsfwDetection(className, score)) {
 				nsfwRawDetections.Add(detection.GetRawText());
 			}
 		}
