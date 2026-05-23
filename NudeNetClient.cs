@@ -15,15 +15,22 @@ public class NudeNetClient : IDisposable {
 	// One server process per tile so each has its own isolated DML device and can
 	// run inference in parallel without GPU device contention.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("640m.onnx", 640),
-		("640m.onnx", 640),
-		("640m.onnx", 640),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
+		("320n.onnx", 320),
 	};
 
 	private readonly List<Process> _processes = new();
 	private readonly List<int> _ports = new();
 	private readonly HttpClient _httpClient;
 	private bool _disposed = false;
+
+	public int ServerCount => _ports.Count;
 
 	public NudeNetClient() {
 		//AppLogger.Info("NudeNetClient.ctor entered");

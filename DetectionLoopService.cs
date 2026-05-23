@@ -16,13 +16,13 @@ public sealed class DetectionLoopService : IDisposable {
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
 	// Pre-downscale crops to the model's input size before JPEG encoding.
-	// Matches the resolution the server backend is launched with (640m.onnx @ 640).
-	private const int InferenceSize = 640;
+	// Matches the resolution the server backend is launched with (320n.onnx @ 320).
+	private const int InferenceSize = 320;
 
 	public event Action<long, NudeNetDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
 
-	private record ScanRegionInfo(int OffsetX, int OffsetY, string Name);
+	private record ScanRegionInfo(int OffsetX, int OffsetY, int Width, int Height, string Name);
 
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
@@ -90,6 +90,7 @@ public sealed class DetectionLoopService : IDisposable {
 			cycleNumber++;
 			var cycleSw = Stopwatch.StartNew();
 			long captureMs = 0;
+			string captureBackend = "none";
 			long encodeMs = 0;
 			long detectMs = 0;
 			int encodedBytes = 0;
@@ -102,7 +103,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 			try {
 				var captureSw = Stopwatch.StartNew();
-				using var screenshot = _screenCaptureService.CapturePrimaryScreen();
+				using var screenshot = _screenCaptureService.CapturePrimaryScreen(out captureBackend);
 				captureSw.Stop();
 				captureMs = captureSw.ElapsedMilliseconds;
 
@@ -110,21 +111,26 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					// Use hxh tiles (height-by-height) and let the backend downscale to its inference size.
-					int scanSize = Math.Min(height, width);
-					int maxX = Math.Max(0, width - scanSize);
-					int midY = Math.Max(0, (height - scanSize) / 2);
+					const int tileColumns = 4;
+					const int tileRows = 2;
+					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
+					for(int row = 0; row < tileRows; row++) {
+						int y0 = (height * row) / tileRows;
+						int y1 = (height * (row + 1)) / tileRows;
+						int tileHeight = Math.Max(1, y1 - y0);
 
-					var scanRegions = new[] {
-						new ScanRegionInfo(0, midY, "left"),
-						new ScanRegionInfo(maxX / 2, midY, "center"),
-						new ScanRegionInfo(maxX, midY, "right"),
-					};
+						for(int col = 0; col < tileColumns; col++) {
+							int x0 = (width * col) / tileColumns;
+							int x1 = (width * (col + 1)) / tileColumns;
+							int tileWidth = Math.Max(1, x1 - x0);
+							scanRegions.Add(new ScanRegionInfo(x0, y0, tileWidth, tileHeight, $"r{row}c{col}"));
+						}
+					}
 
 					var detectSw = Stopwatch.StartNew();
 					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
-					for (int tileIndex = 0; tileIndex < scanRegions.Length; tileIndex++) {
+					for (int tileIndex = 0; tileIndex < scanRegions.Count; tileIndex++) {
 						var region = scanRegions[tileIndex];
 						int serverIndex = tileIndex;
 						regionTasks.Add(Task.Run(async () => {
@@ -132,7 +138,7 @@ public sealed class DetectionLoopService : IDisposable {
 							byte[] imageBytes;
 							using (var regionBitmap = new SKBitmap(InferenceSize, InferenceSize)) {
 								using (var canvas = new SKCanvas(regionBitmap)) {
-									var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + scanSize, region.OffsetY + scanSize);
+									var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height);
 									var dest = new SKRect(0, 0, InferenceSize, InferenceSize);
 									canvas.DrawBitmap(screenshot, source, dest);
 								}
@@ -168,18 +174,19 @@ public sealed class DetectionLoopService : IDisposable {
 					detectMs = detectSw.ElapsedMilliseconds;
 
 					// Consolidate and adjust coordinates.
-					// Detection boxes are in InferenceSize×InferenceSize space; scale back to screen pixels first.
-					double tileScale = (double)scanSize / InferenceSize;
+					// Detection boxes are in InferenceSize×InferenceSize space; scale back to each quadrant's screen pixels.
 					var allDetections = new List<NudeNetDetection>();
 					foreach (var tileResult in results) {
+						double scaleX = (double)tileResult.RegionInfo.Width / InferenceSize;
+						double scaleY = (double)tileResult.RegionInfo.Height / InferenceSize;
 						foreach (var detection in tileResult.Detections) {
 							allDetections.Add(new NudeNetDetection(
 								detection.Class,
 								detection.Score,
-								(int)Math.Round(detection.X * tileScale) + tileResult.RegionInfo.OffsetX,
-								(int)Math.Round(detection.Y * tileScale) + tileResult.RegionInfo.OffsetY,
-								(int)Math.Round(detection.Width * tileScale),
-								(int)Math.Round(detection.Height * tileScale)
+								(int)Math.Round(detection.X * scaleX) + tileResult.RegionInfo.OffsetX,
+								(int)Math.Round(detection.Y * scaleY) + tileResult.RegionInfo.OffsetY,
+								(int)Math.Round(detection.Width * scaleX),
+								(int)Math.Round(detection.Height * scaleY)
 							));
 						}
 					}
@@ -213,7 +220,7 @@ public sealed class DetectionLoopService : IDisposable {
 					: string.Join(" | ", results.Select(r =>
 						$"{r.RegionInfo.Name}: encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms wallEncode={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=jpeg quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms captureBackend={captureBackend} wallEncode={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=jpeg quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
 				);
 				CycleCompleted?.Invoke(cycleNumber);
 			}
@@ -244,6 +251,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 		StopAsync().GetAwaiter().GetResult();
 		_nudeNetClient.Dispose();
+		_screenCaptureService.Dispose();
 		//AppLogger.Info("DetectionLoopService.Dispose completed");
 	}
 }

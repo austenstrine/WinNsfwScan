@@ -35,6 +35,13 @@ public class TrayIconService : IDisposable {
 		//AppLogger.Info("TrayIconService.ctor completed");
 	}
 
+	public void ShowNotification(string title, string message, int timeoutMs = 5000) {
+		_notifyIcon.BalloonTipTitle = title;
+		_notifyIcon.BalloonTipText = message;
+		_notifyIcon.BalloonTipIcon = ToolTipIcon.Info;
+		_notifyIcon.ShowBalloonTip(timeoutMs);
+	}
+
 	public void Dispose() {
 		//AppLogger.Info("TrayIconService.Dispose entered");
 		_notifyIcon.Visible = false;

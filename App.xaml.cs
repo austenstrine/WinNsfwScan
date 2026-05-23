@@ -7,7 +7,7 @@ using System.Windows.Threading;
 namespace WinNsfwScan;
 
 public partial class App : System.Windows.Application {
-	private const long BoxLifetimeCycles = 1;
+	private const long BoxLifetimeCycles = 10;
 	private const float BoxMergeIouThreshold = 0.25f;
 
 	private sealed class TrackedBox {
@@ -40,6 +40,7 @@ public partial class App : System.Windows.Application {
 
 			var screenCaptureService = new ScreenCaptureService();
 			var nudeNetClient = new NudeNetClient();
+			_trayIcon.ShowNotification("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} online).");
 			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.Zero);
 			_detectionLoopService.NsfwDetected += OnNsfwDetected;
 			_detectionLoopService.CycleCompleted += OnCycleCompleted;
@@ -68,18 +69,25 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void UpdateTrackedBoxes(long cycleNumber, NudeNetDetection[] detections) {
+		bool addedAny = false;
+
 		foreach(var detection in detections) {
 			if(!TryRefreshTrackedBox(detection, cycleNumber)) {
 				_trackedBoxes.Add(new TrackedBox(detection, cycleNumber));
+				addedAny = true;
 			}
 		}
 
-		RenderTrackedBoxes();
+		if(addedAny) {
+			RenderTrackedBoxes();
+		}
 	}
 
 	private void PruneExpiredBoxes(long cycleNumber) {
-		_trackedBoxes.RemoveAll(box => cycleNumber - box.LastSeenCycle >= BoxLifetimeCycles);
-		RenderTrackedBoxes();
+		int removed = _trackedBoxes.RemoveAll(box => cycleNumber - box.LastSeenCycle >= BoxLifetimeCycles);
+		if(removed > 0) {
+			RenderTrackedBoxes();
+		}
 	}
 
 	private bool TryRefreshTrackedBox(NudeNetDetection detection, long cycleNumber) {
@@ -90,7 +98,7 @@ public partial class App : System.Windows.Application {
 			if(GetIntersectionOverUnion(trackedBox.Detection, detection) < BoxMergeIouThreshold)
 				continue;
 
-			trackedBox.Detection = detection;
+			// Keep existing box geometry stable and only refresh expiration.
 			trackedBox.LastSeenCycle = cycleNumber;
 			return true;
 		}
