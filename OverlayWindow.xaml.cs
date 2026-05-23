@@ -32,6 +32,7 @@ public partial class OverlayWindow : Window {
 	private bool   _isClickThrough = true;
 	private double _dpiScaleX = 1.0;
 	private double _dpiScaleY = 1.0;
+	private const double BoxInflationScale = 1.10;
 
 	private readonly DispatcherTimer _modifierTimer;
 
@@ -133,15 +134,19 @@ public partial class OverlayWindow : Window {
 			double logicalY = d.Y / _dpiScaleY;
 			double logicalW = d.Width  / _dpiScaleX;
 			double logicalH = d.Height / _dpiScaleY;
+			double inflatedW = logicalW * BoxInflationScale;
+			double inflatedH = logicalH * BoxInflationScale;
+			double expandLeft = (inflatedW - logicalW) * 0.5;
+			double expandTop = (inflatedH - logicalH) * 0.5;
 
 			var rect = new System.Windows.Shapes.Rectangle {
 				Fill   = System.Windows.Media.Brushes.Black,
-				Width  = Math.Max(logicalW, 1),
-				Height = Math.Max(logicalH, 1),
+				Width  = Math.Max(inflatedW, 1),
+				Height = Math.Max(inflatedH, 1),
 			};
 
-			Canvas.SetLeft(rect, logicalX);
-			Canvas.SetTop(rect,  logicalY);
+			Canvas.SetLeft(rect, logicalX - expandLeft);
+			Canvas.SetTop(rect,  logicalY - expandTop);
 			BoxCanvas.Children.Add(rect);
 		}
 	}

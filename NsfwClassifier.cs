@@ -4,13 +4,16 @@ namespace WinNsfwScan;
 /// Shared utility for filtering NSFW class names from NudeNet detection results.
 /// </summary>
 public static class NsfwClassifier {
-	private const float ButtocksCoveredMinScore = 0.30f;
+	private const float GlobalMinScore = 0.50f;
 
 	public static bool IsNsfwClass(string className) {
 		return IsNsfwDetection(className, 1.0f);
 	}
 
 	public static bool IsNsfwDetection(string className, float score) {
+		if(score < GlobalMinScore)
+			return false;
+
 		// Exclude face classes entirely
 		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
 			return false;
@@ -22,11 +25,6 @@ public static class NsfwClassifier {
 		// Exclude male classes except for male genitalia
 		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase)) {
 			return className.Contains("GENITALIA", StringComparison.OrdinalIgnoreCase);
-		}
-
-		// Treat buttocks covered as NSFW only above a confidence floor.
-		if(className.Equals("BUTTOCKS_COVERED", StringComparison.OrdinalIgnoreCase)) {
-			return score >= ButtocksCoveredMinScore;
 		}
 
 		return true;
