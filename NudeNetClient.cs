@@ -45,7 +45,8 @@ public class NudeNetClient : IDisposable {
 		string serverExecutable = Path.GetFullPath(Path.Combine(configDirectory, configuredServerExecutable));
 		//AppLogger.Info($"NudeNetClient.ctor server executable={serverExecutable}");
 
-		// Spawn servers with per-slot model configuration
+		// Spawn all servers up-front so they initialise in parallel.
+		var spawnedProcesses = new Process[ServerConfigs.Length];
 		for (int i = 0; i < ServerConfigs.Length; i++) {
 			var (model, resolution) = ServerConfigs[i];
 			var process = new Process {
@@ -58,16 +59,18 @@ public class NudeNetClient : IDisposable {
 					CreateNoWindow = true
 				}
 			};
-
 			process.Start();
+			spawnedProcesses[i] = process;
 			//AppLogger.Info($"NudeNetClient.ctor backend process {i+1} started ({model} @ {resolution})");
+		}
 
+		// Read each server's port announcement concurrently (each ReadLine blocks until ready).
+		var portResults = new int[ServerConfigs.Length];
+		var readTasks = spawnedProcesses.Select((process, i) => Task.Run(() => {
 			string? line = process.StandardOutput.ReadLine();
 			if (line != null && line.StartsWith("PORT:")) {
-				int port = int.Parse(line.Split(':')[1]);
-				_ports.Add(port);
-				_processes.Add(process);
-				//AppLogger.Info($"NudeNetClient.ctor backend {i+1} ({model} @ {resolution}) announced port {port}");
+				portResults[i] = int.Parse(line.Split(':')[1]);
+				//AppLogger.Info($"NudeNetClient.ctor backend {i+1} announced port {portResults[i]}");
 			}
 			else {
 				string stderr = process.StandardError.ReadToEnd();
@@ -76,6 +79,13 @@ public class NudeNetClient : IDisposable {
 				process.Dispose();
 				throw new Exception($"Failed to read port from backend server {i+1}");
 			}
+		})).ToArray();
+
+		Task.WhenAll(readTasks).GetAwaiter().GetResult();
+
+		for (int i = 0; i < ServerConfigs.Length; i++) {
+			_ports.Add(portResults[i]);
+			_processes.Add(spawnedProcesses[i]);
 		}
 
 		_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };

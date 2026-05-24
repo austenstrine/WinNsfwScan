@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -32,11 +33,31 @@ public partial class App : System.Windows.Application {
 		//AppLogger.Info("App.OnStartup entered");
 		base.OnStartup(e);
 		ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+		// Watchdog mode: no UI — just monitor a PID and restart it when it exits.
+		if(WatchdogService.IsWatchdogMode(e.Args, out int targetPid)) {
+			AppLogger.Info($"App.OnStartup watchdog mode for pid={targetPid}");
+			new Thread(() => {
+				WatchdogService.RunAsWatchdog(targetPid);
+				Environment.Exit(0);
+			}) { Name = "WatchdogThread", IsBackground = false }.Start();
+			return;
+		}
+
 		WindowsToastService.Initialize();
 
 		AppLogger.Info($"App logger initialized at {AppLogger.LogFilePath}");
 		DispatcherUnhandledException += OnDispatcherUnhandledException;
 		AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+
+		// Start resurrection guard, unless the user already completed the 30-min cooldown.
+		// In that case, delete the stale flag so protection is active again next time.
+		if(WatchdogService.IsProtectionDisabled()) {
+			WatchdogService.DeleteDisableFile();
+			AppLogger.Info("App.OnStartup protection was disabled (cooldown expired), clearing flag");
+		} else {
+			WatchdogService.EnsureWatchdog();
+		}
 
 		try {
 			_trayIcon = new TrayIconService();
@@ -211,7 +232,7 @@ public partial class App : System.Windows.Application {
 		}
 
 		if(_mainWindow.IsVisible) {
-			_mainWindow.Hide();
+			_mainWindow.Activate();
 		}
 		else {
 			_mainWindow.Show();

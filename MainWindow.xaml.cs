@@ -52,6 +52,7 @@ public partial class MainWindow : Window {
 	private const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 
 	private readonly DispatcherTimer _hardBlockTimer;
+	private readonly DispatcherTimer _ctrlAltPollTimer;
 	private LowLevelKeyboardProc? _keyboardProc;
 	private IntPtr _keyboardHookHandle = IntPtr.Zero;
 	private DateTime _hardBlockUntilUtc;
@@ -61,6 +62,7 @@ public partial class MainWindow : Window {
 	private WindowState _savedWindowState;
 	private bool _savedTopmost;
 	private bool _webUiLoaded;
+	private bool _ctrlAltHeld;
 
 	public bool IsHardBlockActive => DateTime.UtcNow < _hardBlockUntilUtc;
 	public bool IsWebUiLoaded => _webUiLoaded;
@@ -75,6 +77,10 @@ public partial class MainWindow : Window {
 
 		_hardBlockTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
 		_hardBlockTimer.Tick += HardBlockTimer_Tick;
+
+		_ctrlAltPollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+		_ctrlAltPollTimer.Tick += CtrlAltPollTimer_Tick;
+		_ctrlAltPollTimer.Start();
 		//AppLogger.Info("MainWindow.ctor completed");
 	}
 
@@ -130,18 +136,8 @@ public partial class MainWindow : Window {
 				Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind.Allow
 			);
 
-			// Listen for "ready" message from the frontend
-			webView.CoreWebView2.WebMessageReceived += (s, args) => {
-				if(args.TryGetWebMessageAsString() == "app-ready") {
-					//AppLogger.Info("MainWindow.MainWindow_Loaded frontend app-ready received");
-					_webUiLoaded = true;
-					// Frontend is ready → show WebView2 and hide loader
-					Dispatcher.Invoke(() => {
-						webView.Visibility = Visibility.Visible;
-						LoadingOverlay.Visibility = Visibility.Collapsed;
-					});
-				}
-			};
+			// Listen for messages from the frontend
+			webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
 
 			webView.CoreWebView2.NavigationStarting += (s, args) => {
 				if(!IsHardBlockActive)
@@ -169,10 +165,10 @@ public partial class MainWindow : Window {
 
 	private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e) {
 		//AppLogger.Info("MainWindow.MainWindow_Closing entered");
-		e.Cancel = true;
 
 		if(!_webUiLoaded) {
 			AppLogger.Info("MainWindow closing blocked until web UI loads");
+			e.Cancel = true;
 			Show();
 			Activate();
 			return;
@@ -180,10 +176,19 @@ public partial class MainWindow : Window {
 
 		if(IsHardBlockActive) {
 			AppLogger.Info("MainWindow closing blocked during hard block");
+			e.Cancel = true;
 			EnforceHardBlockPresentation();
 			return;
 		}
 
+		if(WatchdogService.IsProtectionDisabled()) {
+			AppLogger.Info("MainWindow closing allowed — protection disabled");
+			// Let the window close, then exit the process cleanly.
+			Dispatcher.InvokeAsync(() => System.Windows.Application.Current.Shutdown());
+			return;
+		}
+
+		e.Cancel = true;
 		this.Hide();
 	}
 
@@ -264,6 +269,47 @@ public partial class MainWindow : Window {
 		catch(Exception ex) {
 			AppLogger.Error("MainWindow failed to post frontend hard-block message", ex);
 		}
+	}
+
+	private void OnWebMessageReceived(object? sender, Microsoft.Web.WebView2.Core.CoreWebView2WebMessageReceivedEventArgs args) {
+		switch(args.TryGetWebMessageAsString()) {
+			case "app-ready":
+				_webUiLoaded = true;
+				Dispatcher.Invoke(() => {
+					webView.Visibility = Visibility.Visible;
+					LoadingOverlay.Visibility = Visibility.Collapsed;
+				});
+				SendProtectionState();
+				break;
+
+			case "get-protection-state":
+				SendProtectionState();
+				break;
+
+			case "request-disable-protection":
+				WatchdogService.RequestDisable();
+				SendProtectionState();
+				break;
+
+			case "debug-exit":
+				WatchdogService.ForceExit();
+				break;
+		}
+	}
+
+	private void SendProtectionState() {
+		var (isRequested, secondsRemaining) = WatchdogService.GetCooldownState();
+		string json = $"{{\"type\":\"protection-state\",\"isRequested\":{(isRequested ? "true" : "false")},\"secondsRemaining\":{secondsRemaining}}}";
+		TryPostWebMessage(json);
+	}
+
+	private void CtrlAltPollTimer_Tick(object? sender, EventArgs e) {
+		bool held = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
+		         && (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+		if(held == _ctrlAltHeld)
+			return;
+		_ctrlAltHeld = held;
+		TryPostWebMessage($"{{\"type\":\"ctrl-alt-state\",\"held\":{(held ? "true" : "false")}}}");
 	}
 
 	private static bool SendMouseMoveTo(int x, int y) {

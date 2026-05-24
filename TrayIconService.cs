@@ -27,6 +27,10 @@ public class TrayIconService : IDisposable {
 		var exitItem = new ToolStripMenuItem("Exit");
 		exitItem.Click += (s, e) => System.Windows.Application.Current.Shutdown();
 
+		contextMenu.Opening += (s, e) => {
+			exitItem.Enabled = WatchdogService.IsProtectionDisabled();
+		};
+
 		contextMenu.Items.Add(openItem);
 		contextMenu.Items.Add(new ToolStripSeparator());
 		contextMenu.Items.Add(exitItem);
