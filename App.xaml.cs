@@ -9,6 +9,7 @@ namespace WinNsfwScan;
 public partial class App : System.Windows.Application {
 	private const long BoxLifetimeCycles = 10;
 	private const float BoxMergeIouThreshold = 0.25f;
+	private static readonly TimeSpan MinimizeCooldown = TimeSpan.FromSeconds(10);
 
 	private sealed class TrackedBox {
 		public NudeNetDetection Detection { get; set; }
@@ -25,6 +26,7 @@ public partial class App : System.Windows.Application {
 	private DetectionLoopService? _detectionLoopService;
 	private OverlayWindow? _overlayWindow;
 	private readonly List<TrackedBox> _trackedBoxes = new();
+	private DateTime _lastWindowMinimizeUtc = DateTime.MinValue;
 
 	protected override void OnStartup(StartupEventArgs e) {
 		//AppLogger.Info("App.OnStartup entered");
@@ -71,11 +73,15 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void UpdateTrackedBoxes(long cycleNumber, NudeNetDetection[] detections) {
-		if(detections.Any(d => NsfwClassifier.IsHardNsfwDetection(d.Class, d.Score))) {
+		var hardDetections = detections
+			.Where(d => NsfwClassifier.IsHardNsfwDetection(d.Class, d.Score))
+			.OrderByDescending(d => d.Score)
+			.ToArray();
+
+		if(hardDetections.Length > 0) {
 			AppLogger.Info($"App.UpdateTrackedBoxes hard NSFW trigger cycle={cycleNumber} detections={detections.Length}");
-			_trackedBoxes.Clear();
-			_overlayWindow?.ShowFullScreenBlock();
-			return;
+			_mainWindow?.ActivateHardBlock(TimeSpan.FromSeconds(10));
+			TryMinimizeWindowForDetection(hardDetections[0]);
 		}
 
 		bool addedAny = false;
@@ -122,6 +128,27 @@ public partial class App : System.Windows.Application {
 		_overlayWindow?.ReplaceBoxes(_trackedBoxes.Select(box => box.Detection).ToArray());
 	}
 
+	private void TryMinimizeWindowForDetection(NudeNetDetection detection) {
+		DateTime now = DateTime.UtcNow;
+		if(now - _lastWindowMinimizeUtc < MinimizeCooldown)
+			return;
+
+		int centerX = detection.X + Math.Max(0, detection.Width / 2);
+		int centerY = detection.Y + Math.Max(0, detection.Height / 2);
+
+		var excludedWindows = new List<IntPtr>();
+		if(_mainWindow != null && _mainWindow.WindowHandle != IntPtr.Zero)
+			excludedWindows.Add(_mainWindow.WindowHandle);
+		if(_overlayWindow != null && _overlayWindow.WindowHandle != IntPtr.Zero)
+			excludedWindows.Add(_overlayWindow.WindowHandle);
+
+		if(WindowMinimizerService.TryMinimizeWindowAtPoint(centerX, centerY, excludedWindows, out var minimizedWindow, out var title)) {
+			_lastWindowMinimizeUtc = now;
+			string safeTitle = string.IsNullOrWhiteSpace(title) ? "<untitled>" : title;
+			AppLogger.Info($"App minimized window hwnd=0x{minimizedWindow.ToInt64():X} title={safeTitle} at=({centerX},{centerY})");
+		}
+	}
+
 	private static float GetIntersectionOverUnion(NudeNetDetection a, NudeNetDetection b) {
 		int aRight = a.X + a.Width;
 		int aBottom = a.Y + a.Height;
@@ -150,6 +177,11 @@ public partial class App : System.Windows.Application {
 		//AppLogger.Info("App.ShowMainWindow entered");
 		if(_mainWindow == null) {
 			_mainWindow = new MainWindow();
+		}
+
+		if(_mainWindow.IsHardBlockActive) {
+			_mainWindow.ActivateHardBlock(TimeSpan.FromSeconds(10));
+			return;
 		}
 
 		if(_mainWindow.IsVisible) {
