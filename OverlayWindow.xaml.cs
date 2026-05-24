@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace WinNsfwScan;
@@ -32,6 +33,7 @@ public partial class OverlayWindow : Window {
 
 	private IntPtr _hwnd;
 	private bool   _isClickThrough = true;
+	private bool _fullScreenBlockActive;
 	private double _dpiScaleX = 1.0;
 	private double _dpiScaleY = 1.0;
 	private const double BoxInflationScale = 1.10;
@@ -103,6 +105,13 @@ public partial class OverlayWindow : Window {
 		// Re-assert topmost every tick so activating other windows can't push us down.
 		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
+		if(_fullScreenBlockActive) {
+			if(_isClickThrough) {
+				SetClickThrough(false);
+			}
+			return;
+		}
+
 		bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 		bool alt  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
 		bool shouldBeClickThrough = !(ctrl && alt);
@@ -117,7 +126,10 @@ public partial class OverlayWindow : Window {
 	protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e) {
 		base.OnMouseLeftButtonDown(e);
 
-		if(!_isClickThrough) {
+		bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+		bool alt  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;
+
+		if(!_isClickThrough && ctrl && alt) {
 			AppLogger.Info("OverlayWindow.OnMouseLeftButtonDown Ctrl+Alt+Click — clearing all boxes");
 			ClearAll();
 		}
@@ -129,6 +141,9 @@ public partial class OverlayWindow : Window {
 	/// Replaces all censorship rectangles with the provided detections.
 	/// </summary>
 	public void ReplaceBoxes(NudeNetDetection[] detections) {
+		if(_fullScreenBlockActive)
+			return;
+
 		BoxCanvas.Children.Clear();
 		AddBoxes(detections);
 	}
@@ -138,6 +153,9 @@ public partial class OverlayWindow : Window {
 	/// Coordinates are in source-image physical pixels and are converted to WPF logical units.
 	/// </summary>
 	public void AddBoxes(NudeNetDetection[] detections) {
+		if(_fullScreenBlockActive)
+			return;
+
 		AppLogger.Info($"OverlayWindow.AddBoxes adding {detections.Length} boxes (total children={BoxCanvas.Children.Count + detections.Length})");
 
 		foreach(var d in detections) {
@@ -168,8 +186,21 @@ public partial class OverlayWindow : Window {
 	/// </summary>
 	public void ClearAll() {
 		AppLogger.Info("OverlayWindow.ClearAll clearing all boxes");
+		_fullScreenBlockActive = false;
+		RootGrid.Background = System.Windows.Media.Brushes.Transparent;
 		BoxCanvas.Children.Clear();
 		SetClickThrough(true);
+	}
+
+	public void ShowFullScreenBlock() {
+		if(_fullScreenBlockActive)
+			return;
+
+		AppLogger.Info("OverlayWindow.ShowFullScreenBlock activating full-screen block");
+		_fullScreenBlockActive = true;
+		BoxCanvas.Children.Clear();
+		RootGrid.Background = System.Windows.Media.Brushes.Black;
+		SetClickThrough(false);
 	}
 
 	protected override void OnClosed(EventArgs e) {

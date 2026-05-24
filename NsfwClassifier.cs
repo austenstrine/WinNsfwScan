@@ -5,6 +5,7 @@ namespace WinNsfwScan;
 /// </summary>
 public static class NsfwClassifier {
 	private const float GlobalMinScore = 0.05f;
+	private const float HardMinScore = 0.70f;
 
 	public static bool IsNsfwClass(string className) {
 		return IsNsfwDetection(className, 1.0f);
@@ -38,5 +39,21 @@ public static class NsfwClassifier {
 		}
 
 		return true;
+	}
+
+	public static bool IsHardNsfwDetection(string className, float score) {
+		if(score < HardMinScore)
+			return false;
+
+		if(className.Contains("GENITALIA", StringComparison.OrdinalIgnoreCase))
+			return true;
+
+		if(string.Equals(className, "FEMALE_BREAST_EXPOSED", StringComparison.OrdinalIgnoreCase))
+			return true;
+
+		if(className.Contains("BUTTOCKS_EXPOSED", StringComparison.OrdinalIgnoreCase))
+			return true;
+
+		return false;
 	}
 }

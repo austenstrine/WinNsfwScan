@@ -30,6 +30,7 @@ public partial class App : System.Windows.Application {
 		//AppLogger.Info("App.OnStartup entered");
 		base.OnStartup(e);
 		ShutdownMode = ShutdownMode.OnExplicitShutdown;
+		WindowsToastService.Initialize();
 
 		AppLogger.Info($"App logger initialized at {AppLogger.LogFilePath}");
 		DispatcherUnhandledException += OnDispatcherUnhandledException;
@@ -40,7 +41,6 @@ public partial class App : System.Windows.Application {
 
 			var screenCaptureService = new ScreenCaptureService();
 			var nudeNetClient = new NudeNetClient();
-			_trayIcon.ShowNotification("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} online).");
 			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.Zero);
 			_detectionLoopService.NsfwDetected += OnNsfwDetected;
 			_detectionLoopService.CycleCompleted += OnCycleCompleted;
@@ -50,6 +50,8 @@ public partial class App : System.Windows.Application {
 
 			_overlayWindow = new OverlayWindow();
 			_overlayWindow.Show();
+
+			WindowsToastService.TryShow("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} online).");
 
 			AppLogger.Info("App.OnStartup completed");
 		}
@@ -69,6 +71,13 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void UpdateTrackedBoxes(long cycleNumber, NudeNetDetection[] detections) {
+		if(detections.Any(d => NsfwClassifier.IsHardNsfwDetection(d.Class, d.Score))) {
+			AppLogger.Info($"App.UpdateTrackedBoxes hard NSFW trigger cycle={cycleNumber} detections={detections.Length}");
+			_trackedBoxes.Clear();
+			_overlayWindow?.ShowFullScreenBlock();
+			return;
+		}
+
 		bool addedAny = false;
 
 		foreach(var detection in detections) {
@@ -84,6 +93,9 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void PruneExpiredBoxes(long cycleNumber) {
+		if(_trackedBoxes.Count == 0)
+			return;
+
 		int removed = _trackedBoxes.RemoveAll(box => cycleNumber - box.LastSeenCycle >= BoxLifetimeCycles);
 		if(removed > 0) {
 			RenderTrackedBoxes();

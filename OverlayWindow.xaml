@@ -12,7 +12,7 @@
 >
 	<!-- Background="Transparent" on Grid makes it WPF-hit-testable (unlike null), -->
 	<!-- so clicks register when click-through is disabled via Win32. -->
-	<Grid Background="Transparent">
+	<Grid x:Name="RootGrid" Background="Transparent">
 		<Canvas x:Name="BoxCanvas"/>
 	</Grid>
 </Window>
