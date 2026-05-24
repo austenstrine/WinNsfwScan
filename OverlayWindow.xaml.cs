@@ -25,12 +25,19 @@ public partial class OverlayWindow : Window {
 	[DllImport("user32.dll")] static extern bool  SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
 	[DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
 	[DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+	[DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+	[DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
+	private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint idEventThread, uint dwmsEventTime);
 
 	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 	const uint SWP_NOMOVE    = 0x0002;
 	const uint SWP_NOSIZE    = 0x0001;
 	const uint SWP_NOACTIVATE = 0x0010;
 	const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
+	const uint EVENT_OBJECT_SHOW  = 0x8002;
+	const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+	const int  OBJID_WINDOW = 0;
 
 	private IntPtr _hwnd;
 	private bool   _isClickThrough = true;
@@ -38,6 +45,8 @@ public partial class OverlayWindow : Window {
 	private double _dpiScaleY = 1.0;
 	private const double BoxInflationScale = 1.10;
 	private IntPtr _preferBelowWindow = IntPtr.Zero;
+	private WinEventProc? _winEventProc;   // held to prevent GC collection
+	private IntPtr _winEventHook = IntPtr.Zero;
 
 	public IntPtr WindowHandle => _hwnd;
 
@@ -89,7 +98,24 @@ public partial class OverlayWindow : Window {
 		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 		SetWindowDisplayAffinity(_hwnd, WDA_EXCLUDEFROMCAPTURE);
 
+		// Re-assert Z-order immediately whenever any window is shown (e.g. taskbar thumbnail previews).
+		// WINEVENT_OUTOFCONTEXT delivers the callback on this UI thread via the message pump.
+		_winEventProc = OnAnyWindowShown;
+		_winEventHook = SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_SHOW, IntPtr.Zero, _winEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+
 		//AppLogger.Info($"OverlayWindow.OnSourceInitialized hwnd={_hwnd} dpiX={_dpiScaleX} dpiY={_dpiScaleY}");
+	}
+
+	private void OnAnyWindowShown(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint idEventThread, uint dwmsEventTime) {
+		// idObject == OBJID_WINDOW (0) means a real window handle was shown, not an internal UI element.
+		if(hwnd == IntPtr.Zero || idObject != OBJID_WINDOW || hwnd == _hwnd)
+			return;
+
+		if(_preferBelowWindow != IntPtr.Zero && IsWindow(_preferBelowWindow) && IsWindowVisible(_preferBelowWindow)) {
+			SetWindowPos(_hwnd, _preferBelowWindow, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		} else {
+			SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		}
 	}
 
 	// ── Click-through toggle ──────────────────────────────────────────────────
@@ -193,6 +219,10 @@ public partial class OverlayWindow : Window {
 	protected override void OnClosed(EventArgs e) {
 		//AppLogger.Info("OverlayWindow.OnClosed entered");
 		_modifierTimer.Stop();
+		if(_winEventHook != IntPtr.Zero) {
+			UnhookWinEvent(_winEventHook);
+			_winEventHook = IntPtr.Zero;
+		}
 		base.OnClosed(e);
 	}
 }

@@ -39,10 +39,15 @@ public partial class MainWindow : Window {
 	private static extern bool GetCursorPos(out POINT lpPoint);
 
 	[DllImport("user32.dll", SetLastError = true)]
-	private static extern bool SetCursorPos(int X, int Y);
+	private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
 	[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 	private static extern IntPtr GetModuleHandle(string? lpModuleName);
+
+	private const uint INPUT_MOUSE = 0;
+	private const uint MOUSEEVENTF_MOVE = 0x0001;
+	private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+	private const uint MOUSEEVENTF_VIRTUALDESK = 0x4000;
 
 	private const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
 
@@ -261,6 +266,30 @@ public partial class MainWindow : Window {
 		}
 	}
 
+	private static bool SendMouseMoveTo(int x, int y) {
+		double virtualLeft   = SystemParameters.VirtualScreenLeft;
+		double virtualTop    = SystemParameters.VirtualScreenTop;
+		double virtualWidth  = SystemParameters.VirtualScreenWidth;
+		double virtualHeight = SystemParameters.VirtualScreenHeight;
+
+		int normalizedX = (int)((x - virtualLeft)  / (virtualWidth  - 1) * 65535.0);
+		int normalizedY = (int)((y - virtualTop)    / (virtualHeight - 1) * 65535.0);
+
+		var input = new INPUT {
+			type = INPUT_MOUSE,
+			mi = new MOUSEINPUT {
+				dx          = normalizedX,
+				dy          = normalizedY,
+				mouseData   = 0,
+				dwFlags     = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+				time        = 0,
+				dwExtraInfo = IntPtr.Zero
+			}
+		};
+
+		return SendInput(1, [input], Marshal.SizeOf<INPUT>()) == 1;
+	}
+
 	private async Task MoveCursorAwayThenEnforceHardBlockAsync() {
 		if(!GetCursorPos(out var originalPosition)) {
 			AppLogger.Info("MainWindow cursor move skipped because current cursor position could not be read");
@@ -271,7 +300,7 @@ public partial class MainWindow : Window {
 		int topRightX = (int)(SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 1);
 		int topRightY = (int)SystemParameters.VirtualScreenTop;
 
-		if(!SetCursorPos(topRightX, topRightY)) {
+		if(!SendMouseMoveTo(topRightX, topRightY)) {
 			AppLogger.Info("MainWindow cursor move failed to reach top-right");
 			EnforceHardBlockPresentation();
 			return;
@@ -283,7 +312,7 @@ public partial class MainWindow : Window {
 
 		await Task.Delay(150);
 
-		if(!SetCursorPos(originalPosition.X, originalPosition.Y)) {
+		if(!SendMouseMoveTo(originalPosition.X, originalPosition.Y)) {
 			AppLogger.Info("MainWindow cursor move failed to restore original position");
 		}
 	}
@@ -348,6 +377,22 @@ public partial class MainWindow : Window {
 		public uint flags;
 		public uint time;
 		public IntPtr dwExtraInfo;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct MOUSEINPUT {
+		public int dx;
+		public int dy;
+		public uint mouseData;
+		public uint dwFlags;
+		public uint time;
+		public IntPtr dwExtraInfo;
+	}
+
+	[StructLayout(LayoutKind.Sequential)]
+	private struct INPUT {
+		public uint type;
+		public MOUSEINPUT mi;
 	}
 
 	[StructLayout(LayoutKind.Sequential)]
