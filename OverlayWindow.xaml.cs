@@ -23,6 +23,8 @@ public partial class OverlayWindow : Window {
 	[DllImport("user32.dll", SetLastError = true)] static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
 	[DllImport("user32.dll")] static extern short GetAsyncKeyState(int vKey);
 	[DllImport("user32.dll")] static extern bool  SetWindowPos(IntPtr hwnd, IntPtr hwndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+	[DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+	[DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
 
 	static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
 	const uint SWP_NOMOVE    = 0x0002;
@@ -35,6 +37,7 @@ public partial class OverlayWindow : Window {
 	private double _dpiScaleX = 1.0;
 	private double _dpiScaleY = 1.0;
 	private const double BoxInflationScale = 1.10;
+	private IntPtr _preferBelowWindow = IntPtr.Zero;
 
 	public IntPtr WindowHandle => _hwnd;
 
@@ -54,6 +57,10 @@ public partial class OverlayWindow : Window {
 			SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 
 		//AppLogger.Info("OverlayWindow.ctor completed");
+	}
+
+	public void SetPreferredAboveWindow(IntPtr windowHandle) {
+		_preferBelowWindow = windowHandle;
 	}
 
 	protected override void OnSourceInitialized(EventArgs e) {
@@ -102,8 +109,14 @@ public partial class OverlayWindow : Window {
 
 	// Polls keyboard state every 50 ms; disables click-through while Ctrl+Alt is held
 	private void OnModifierTimerTick(object? sender, EventArgs e) {
-		// Re-assert topmost every tick so activating other windows can't push us down.
-		SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		// Re-assert layering every tick. In hard-block mode we keep the overlay below
+		// the app window so the app remains visually on top while boxes still render underneath.
+		if(_preferBelowWindow != IntPtr.Zero && IsWindow(_preferBelowWindow) && IsWindowVisible(_preferBelowWindow)) {
+			SetWindowPos(_hwnd, _preferBelowWindow, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		}
+		else {
+			SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		}
 
 		bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
 		bool alt  = (GetAsyncKeyState(VK_MENU)    & 0x8000) != 0;

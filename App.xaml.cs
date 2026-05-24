@@ -49,6 +49,7 @@ public partial class App : System.Windows.Application {
 			_detectionLoopService.Start();
 
 			_mainWindow = new MainWindow();
+			ShowMainWindow();
 
 			_overlayWindow = new OverlayWindow();
 			_overlayWindow.Show();
@@ -69,7 +70,10 @@ public partial class App : System.Windows.Application {
 	}
 
 	private void OnCycleCompleted(long cycleNumber) {
-		Dispatcher.InvokeAsync(() => PruneExpiredBoxes(cycleNumber));
+		Dispatcher.InvokeAsync(() => {
+			PruneExpiredBoxes(cycleNumber);
+			SyncOverlayLayering();
+		});
 	}
 
 	private void UpdateTrackedBoxes(long cycleNumber, NudeNetDetection[] detections) {
@@ -80,8 +84,9 @@ public partial class App : System.Windows.Application {
 
 		if(hardDetections.Length > 0) {
 			AppLogger.Info($"App.UpdateTrackedBoxes hard NSFW trigger cycle={cycleNumber} detections={detections.Length}");
-			_mainWindow?.ActivateHardBlock(TimeSpan.FromSeconds(10));
 			TryMinimizeWindowForDetection(hardDetections[0]);
+			_mainWindow?.ActivateHardBlock(TimeSpan.FromSeconds(10));
+			SyncOverlayLayering();
 		}
 
 		bool addedAny = false;
@@ -126,6 +131,18 @@ public partial class App : System.Windows.Application {
 
 	private void RenderTrackedBoxes() {
 		_overlayWindow?.ReplaceBoxes(_trackedBoxes.Select(box => box.Detection).ToArray());
+	}
+
+	private void SyncOverlayLayering() {
+		if(_overlayWindow == null || _mainWindow == null)
+			return;
+
+		if(_mainWindow.IsHardBlockActive && _mainWindow.WindowHandle != IntPtr.Zero) {
+			_overlayWindow.SetPreferredAboveWindow(_mainWindow.WindowHandle);
+		}
+		else {
+			_overlayWindow.SetPreferredAboveWindow(IntPtr.Zero);
+		}
 	}
 
 	private void TryMinimizeWindowForDetection(NudeNetDetection detection) {
@@ -177,6 +194,15 @@ public partial class App : System.Windows.Application {
 		//AppLogger.Info("App.ShowMainWindow entered");
 		if(_mainWindow == null) {
 			_mainWindow = new MainWindow();
+		}
+
+		if(!_mainWindow.IsWebUiLoaded) {
+			if(!_mainWindow.IsVisible) {
+				_mainWindow.Show();
+			}
+
+			_mainWindow.Activate();
+			return;
 		}
 
 		if(_mainWindow.IsHardBlockActive) {
