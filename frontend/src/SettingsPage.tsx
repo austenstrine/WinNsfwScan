@@ -1,9 +1,9 @@
 type SettingsPageProps = {
-	isMonitoring: boolean
-	onToggleMonitoring: () => void
 	protectionIsRequested: boolean
 	protectionSecondsRemaining: number
 	onRequestDisableProtection: () => void
+	onTestHardBlock: () => void
+	onManageSubscription: () => void
 	ctrlAltHeld: boolean
 	onDebugExit: () => void
 }
@@ -14,7 +14,7 @@ function formatCountdown(totalSeconds: number): string {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-function SettingsPage({ isMonitoring, onToggleMonitoring, protectionIsRequested, protectionSecondsRemaining, onRequestDisableProtection, ctrlAltHeld, onDebugExit }: SettingsPageProps) {
+function SettingsPage({ protectionIsRequested, protectionSecondsRemaining, onRequestDisableProtection, onTestHardBlock, onManageSubscription, ctrlAltHeld, onDebugExit }: SettingsPageProps) {
 	const protectionDisabled = protectionIsRequested && protectionSecondsRemaining === 0
 
 	return (
@@ -30,76 +30,51 @@ function SettingsPage({ isMonitoring, onToggleMonitoring, protectionIsRequested,
 				</div>
 
 				<div className="flex items-center gap-2">
-					<div className={`w-2.5 h-2.5 rounded-full ${isMonitoring ? 'bg-emerald-500' : 'bg-red-500'}`} />
-					<span className="text-sm text-slate-300">
-						{isMonitoring ? 'Monitoring' : 'Paused'}
-					</span>
+					<div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+					<span className="text-sm text-slate-300">Monitoring</span>
 				</div>
 			</div>
 
 			<div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-				<div className="flex items-center justify-between mb-4">
-					<h2 className="text-lg font-medium">
-						Current Status
-					</h2>
-					<button
-						onClick={onToggleMonitoring}
-						className="px-4 py-1.5 text-sm rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
-					>
-						{isMonitoring ? 'Pause' : 'Resume'}
-					</button>
-				</div>
-
-				<div className="text-5xl font-semibold tracking-tighter mb-1">
-					{isMonitoring ? 'Active' : 'Paused'}
-				</div>
+				<h2 className="text-lg font-medium mb-4">Current Status</h2>
+				<div className="text-5xl font-semibold tracking-tighter mb-1">Active</div>
 				<p className="text-slate-400 text-sm">Last scan: just now</p>
 			</div>
 
 			<div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-				<h2 className="text-lg font-medium mb-5">
-					Settings
-				</h2>
+				<h2 className="text-lg font-medium mb-5">Actions</h2>
 
-				<div className="space-y-5">
+				<div className="space-y-4">
 					<div className="flex items-center justify-between">
 						<div>
-							<div className="font-medium">
-								Start minimized to tray
-							</div>
-							<div className="text-sm text-slate-400">
-								Launch automatically with Windows
+							<div className="font-medium">Test hard block</div>
+							<div className="text-sm text-slate-400 mt-0.5">
+								Trigger a 10-second hard block to verify overlay behaviour
 							</div>
 						</div>
-						<input type="checkbox" className="w-5 h-5 accent-emerald-600" defaultChecked />
+						<button
+							onClick={onTestHardBlock}
+							className="ml-4 shrink-0 px-4 py-1.5 text-sm rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
+						>
+							Test
+						</button>
 					</div>
 
-					<div className="flex items-center justify-between">
-						<div>
-							<div className="font-medium">
-								Show detection notifications
-							</div>
-							<div className="text-sm text-slate-400">
-								Desktop toast when NSFW is detected
-							</div>
-						</div>
-						<input type="checkbox" className="w-5 h-5 accent-emerald-600" defaultChecked />
-					</div>
+					<div className="border-t border-slate-800" />
 
 					<div className="flex items-center justify-between">
 						<div>
-							<div className="font-medium">
-								Detection sensitivity
-							</div>
-							<div className="text-sm text-slate-400">
-								How strict the detection should be
+							<div className="font-medium">Subscription</div>
+							<div className="text-sm text-slate-400 mt-0.5">
+								Manage your WinNsfwScan licence
 							</div>
 						</div>
-						<select className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-sm">
-							<option>Balanced</option>
-							<option>Strict</option>
-							<option>Lenient</option>
-						</select>
+						<button
+							onClick={onManageSubscription}
+							className="ml-4 shrink-0 px-4 py-1.5 text-sm rounded-lg bg-slate-800 hover:bg-slate-700 transition-colors"
+						>
+							Manage
+						</button>
 					</div>
 				</div>
 			</div>

@@ -34,7 +34,6 @@ function getWebView(): WebViewBridge | undefined {
 }
 
 function App() {
-	const [isMonitoring, setIsMonitoring] = useState(true)
 	const [viewMode, setViewMode] = useState<ViewMode>('settings')
 	const [hardBlockSecondsRemaining, setHardBlockSecondsRemaining] = useState(DEFAULT_HARD_BLOCK_SECONDS)
 	const [protectionIsRequested, setProtectionIsRequested] = useState(false)
@@ -110,6 +109,14 @@ function App() {
 		postToHost('request-disable-protection')
 	}, [postToHost])
 
+	const handleTestHardBlock = useCallback(() => {
+		postToHost('test-hard-block')
+	}, [postToHost])
+
+	const handleManageSubscription = useCallback(() => {
+		postToHost('open-subscription')
+	}, [postToHost])
+
 	const handleDebugExit = useCallback(() => {
 		postToHost('debug-exit')
 	}, [postToHost])
@@ -121,11 +128,13 @@ function App() {
 					<HardBlockPage secondsRemaining={hardBlockSecondsRemaining} />
 				) : (
 					<SettingsPage
-						isMonitoring={isMonitoring}
-						onToggleMonitoring={() => setIsMonitoring(!isMonitoring)}
 						protectionIsRequested={protectionIsRequested}
 						protectionSecondsRemaining={protectionSecondsRemaining}
-						onRequestDisableProtection={handleRequestDisableProtection}					ctrlAltHeld={ctrlAltHeld}						onDebugExit={handleDebugExit}
+						onRequestDisableProtection={handleRequestDisableProtection}
+						onTestHardBlock={handleTestHardBlock}
+						onManageSubscription={handleManageSubscription}
+						ctrlAltHeld={ctrlAltHeld}
+						onDebugExit={handleDebugExit}
 					/>
 				)}
 

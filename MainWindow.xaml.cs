@@ -291,6 +291,15 @@ public partial class MainWindow : Window {
 				SendProtectionState();
 				break;
 
+			case "test-hard-block":
+				Dispatcher.Invoke(() => ActivateHardBlock(TimeSpan.FromSeconds(10)));
+				break;
+
+			case "open-subscription":
+				System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+					"https://example.com/subscribe") { UseShellExecute = true });
+				break;
+
 			case "debug-exit":
 				WatchdogService.ForceExit();
 				break;
