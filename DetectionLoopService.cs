@@ -106,69 +106,95 @@ public sealed class DetectionLoopService : IDisposable {
 					width = screenshot.Width;
 					height = screenshot.Height;
 					const int tileColumns = 4;
-					const int tileRows = 2;
+					const int tileRows = 3;
 					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
 					for(int row = 0; row < tileRows; row++) {
 						int y0 = (height * row) / tileRows;
 						int y1 = (height * (row + 1)) / tileRows;
-						int tileHeight = Math.Max(1, y1 - y0);
+						int tileH = Math.Max(1, y1 - y0);
 
 						for(int col = 0; col < tileColumns; col++) {
 							int x0 = (width * col) / tileColumns;
 							int x1 = (width * (col + 1)) / tileColumns;
-							int tileWidth = Math.Max(1, x1 - x0);
-							scanRegions.Add(new ScanRegionInfo(x0, y0, tileWidth, tileHeight, $"r{row}c{col}"));
+							int tileW = Math.Max(1, x1 - x0);
+							scanRegions.Add(new ScanRegionInfo(x0, y0, tileW, tileH, $"r{row}c{col}"));
 						}
 					}
 
 					var detectSw = Stopwatch.StartNew();
 					var regionTasks = new List<Task<(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotExtractMs, long SlotDetectMs)>>();
+					// One semaphore per server — each server handles only one inference at a time.
+					var serverSlots = Enumerable.Range(0, _nsfwClient.ServerCount)
+						.Select(_ => new SemaphoreSlim(1, 1))
+						.ToArray();
 
 					for (int tileIndex = 0; tileIndex < scanRegions.Count; tileIndex++) {
 						var region = scanRegions[tileIndex];
-						int serverIndex = tileIndex;
+						int serverIndex = tileIndex % _nsfwClient.ServerCount;
+						var serverSlot = serverSlots[serverIndex];
 						regionTasks.Add(Task.Run(async () => {
+							// Letterbox tile to 640×640 in C#.
+							// Scale so the largest dimension fits in 640, pad remainder with YOLO grey (114).
+							const int modelSize = 640;
+							double lbScale = Math.Min((double)modelSize / region.Width, (double)modelSize / region.Height);
+							int scaledW = (int)(region.Width  * lbScale);
+							int scaledH = (int)(region.Height * lbScale);
+							int padLeft = (modelSize - scaledW) / 2;
+							int padTop  = (modelSize - scaledH) / 2;
+
 							var slotExtractSw = Stopwatch.StartNew();
 							byte[] rawBytes;
-							using (var regionBitmap = new SKBitmap(region.Width, region.Height)) {
-								using (var canvas = new SKCanvas(regionBitmap)) {
+							using (var lbBitmap = new SKBitmap(modelSize, modelSize)) {
+								using (var canvas = new SKCanvas(lbBitmap)) {
+									canvas.Clear(new SKColor(114, 114, 114));
 									canvas.DrawBitmap(screenshot,
 										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
-										new SKRect(0, 0, region.Width, region.Height));
+										new SKRect(padLeft, padTop, padLeft + scaledW, padTop + scaledH));
 								}
-								rawBytes = regionBitmap.Bytes;
+								rawBytes = lbBitmap.Bytes;
 							}
 							slotExtractSw.Stop();
 
-							NsfwDetection[] detections;
+							NsfwDetection[] rawDetections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								detections = await _nsfwClient.DetectAsync(rawBytes, region.Width, region.Height, $"screen-{region.Name}", serverIndex).ConfigureAwait(false);
+								await serverSlot.WaitAsync().ConfigureAwait(false);
+								try {
+									rawDetections = await _nsfwClient.DetectAsync(rawBytes, $"screen-{region.Name}", serverIndex).ConfigureAwait(false);
+								} finally {
+									serverSlot.Release();
+								}
 							}
 							catch (Exception ex) {
 								AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
-								detections = Array.Empty<NsfwDetection>();
+								rawDetections = Array.Empty<NsfwDetection>();
 							}
 							slotDetectSw.Stop();
+
+							// Un-project boxes from 640×640 letterbox space → tile-local pixel space.
+							var detections = rawDetections.Select(d => new NsfwDetection(
+								d.Class, d.Score,
+								(int)Math.Round(Math.Max(0.0, d.X - padLeft) / lbScale),
+								(int)Math.Round(Math.Max(0.0, d.Y - padTop)  / lbScale),
+								(int)Math.Round(d.Width  / lbScale),
+								(int)Math.Round(d.Height / lbScale)
+							)).ToArray();
 
 							return (
 								Detections: detections,
 								RegionInfo: region,
-							Bytes: rawBytes.Length,
-							SlotExtractMs: slotExtractSw.ElapsedMilliseconds,
-								SlotDetectMs: slotDetectSw.ElapsedMilliseconds
-							);
-						}));
-					}
+								Bytes: rawBytes.Length,
+								SlotExtractMs: slotExtractSw.ElapsedMilliseconds,
+								SlotDetectMs: slotDetectSw.ElapsedMilliseconds						);
+					}));
+				}
 
-					results = await Task.WhenAll(regionTasks).ConfigureAwait(false);
-					detectSw.Stop();
-					encodeMs = results.Sum(x => x.SlotExtractMs);
+				results = await Task.WhenAll(regionTasks).ConfigureAwait(false);
+				detectSw.Stop();					encodeMs = results.Sum(x => x.SlotExtractMs);
 					encodedBytes = results.Sum(x => x.Bytes);
 					detectMs = detectSw.ElapsedMilliseconds;
 
-					// Consolidate detections, adjusting from tile-local coordinates to screen coordinates.
-					// The server returns boxes in original tile-pixel space (letterboxing is internal to the server).
+					// Consolidate detections, mapping tile-local coordinates → screen coordinates.
 					var allDetections = new List<NsfwDetection>();
 					foreach (var tileResult in results) {
 						foreach (var detection in tileResult.Detections) {

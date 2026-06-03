@@ -21,8 +21,6 @@ public class NsfwClient : IDisposable {
 		("erax_nsfw_yolo11n.onnx", 640),
 		("erax_nsfw_yolo11n.onnx", 640),
 		("erax_nsfw_yolo11n.onnx", 640),
-		("erax_nsfw_yolo11n.onnx", 640),
-		("erax_nsfw_yolo11n.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();
@@ -107,19 +105,16 @@ public class NsfwClient : IDisposable {
 	}
 
 	/// <summary>
-	/// Detect NSFW content in a tile image on the given server.
-	/// Sends raw BGRA pixel bytes (SkiaSharp Bgra8888) with X-Image-Width / X-Image-Height headers
-	/// to avoid JPEG encode/decode overhead and quality loss.
+	/// Detect NSFW content in a pre-letterboxed 640×640 tile.
+	/// C# letterboxes to 640×640 before calling; Python feeds raw pixels straight to ONNX.
 	/// </summary>
-	public async Task<NsfwDetection[]> DetectAsync(byte[] rawBgraBytes, int width, int height, string fileName, int serverIndex) {
+	public async Task<NsfwDetection[]> DetectAsync(byte[] rawBgraBytes, string fileName, int serverIndex) {
 
 		int port = _ports[serverIndex];
 
-		//AppLogger.Info($"NsfwClient.DetectAsync entered size={rawBgraBytes.Length} {width}x{height} server={serverIndex}");
 		using var content = new ByteArrayContent(rawBgraBytes);
 		content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-		content.Headers.Add("X-Image-Width",  width.ToString());
-		content.Headers.Add("X-Image-Height", height.ToString());
+		// No width/height headers needed — payload is always 640×640×4 BGRA.
 
 		var requestSw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{port}/detect_raw", content);
@@ -129,7 +124,11 @@ public class NsfwClient : IDisposable {
 		var readSw = Stopwatch.StartNew();
 		var json = await response.Content.ReadAsStringAsync();
 		readSw.Stop();
-		//AppLogger.Info($"NudeNetClient.DetectAsync readBody={readSw.ElapsedMilliseconds}ms length={json.Length}");
+
+		if (!response.IsSuccessStatusCode) {
+			AppLogger.Error($"NsfwClient.DetectAsync HTTP {(int)response.StatusCode} from server={serverIndex} file={fileName}: {json}");
+			return Array.Empty<NsfwDetection>();
+		}
 
 		var parseSw = Stopwatch.StartNew();
 		using var doc = JsonDocument.Parse(json);

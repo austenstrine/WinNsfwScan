@@ -1,22 +1,21 @@
 """EraX NSFW Detection Server
 FastAPI + ONNX Runtime inference server for the EraX YOLO11 NSFW model.
 
-Accepts raw BGRA pixel bytes via POST /detect_raw with two required headers:
-  X-Image-Width  — pixel width
-  X-Image-Height — pixel height
-
-Sending raw pixels avoids JPEG encode/decode overhead and quality loss.
+Accepts a pre-letterboxed 640×640 BGRA frame via POST /detect_raw.
+All image preprocessing (resize + pad) is performed in C# using SkiaSharp
+before this server is called, so Python only handles float normalisation,
+ONNX inference, and NMS.
 """
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 import datetime
 import os
 import socket
 import sys
 import traceback
 
-import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 import uvicorn
@@ -27,7 +26,7 @@ import onnxruntime as ort
 # ---------------------------------------------------------------------------
 
 CLASS_NAMES = ['anus', 'make_love', 'nipple', 'penis', 'vagina']
-_LETTERBOX_GREY = 114   # standard YOLO padding colour
+_MODEL_SIZE = 640   # YOLO11 native input resolution
 
 
 # ---------------------------------------------------------------------------
@@ -55,31 +54,8 @@ class Logger:
 
 
 # ---------------------------------------------------------------------------
-# Image pre/post-processing
+# Image post-processing (no pre-processing — C# handles letterbox)
 # ---------------------------------------------------------------------------
-
-def _letterbox(img_bgr: np.ndarray, target: int):
-    """Aspect-ratio-preserving resize + grey padding to target×target.
-
-    Returns (blob NCHW float32, scale, pad_top, pad_left).
-    """
-    h, w = img_bgr.shape[:2]
-    scale = min(target / h, target / w)
-    new_h = int(h * scale)
-    new_w = int(w * scale)
-
-    resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-    pad_top  = (target - new_h) // 2
-    pad_left = (target - new_w) // 2
-
-    canvas = np.full((target, target, 3), _LETTERBOX_GREY, dtype=np.uint8)
-    canvas[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized
-
-    # BGR → RGB, HWC → NCHW, normalise to [0, 1]
-    blob = (canvas[:, :, ::-1].astype(np.float32) / 255.0).transpose(2, 0, 1)[np.newaxis]
-    return blob, scale, pad_top, pad_left
-
 
 def _nms(boxes_xyxy: np.ndarray, scores: np.ndarray, iou_thresh: float) -> list:
     x1, y1, x2, y2 = boxes_xyxy[:, 0], boxes_xyxy[:, 1], boxes_xyxy[:, 2], boxes_xyxy[:, 3]
@@ -99,12 +75,11 @@ def _nms(boxes_xyxy: np.ndarray, scores: np.ndarray, iou_thresh: float) -> list:
     return keep
 
 
-def _decode(outputs, orig_h: int, orig_w: int,
-            scale: float, pad_top: int, pad_left: int,
-            conf_thresh: float, iou_thresh: float) -> list:
+def _decode(outputs, conf_thresh: float, iou_thresh: float) -> list:
     """Decode YOLO11 output tensor [1, 4+C, 8400] to detection dicts.
 
-    Box format in result: [x, y, w, h] in original image pixels (top-left origin).
+    Boxes are already in 640×640 letterbox space (C# pre-processed).
+    Box format in result: [x, y, w, h] in 640px pixels (top-left origin).
     """
     preds = outputs[0][0].T          # [8400, 4+C]
     cls_scores = preds[:, 4:]
@@ -122,11 +97,10 @@ def _decode(outputs, orig_h: int, orig_w: int,
     scores = max_scores[mask]
     ids    = class_ids[mask]
 
-    # Undo letterbox padding and scale → original image coordinates
-    x1 = np.clip((cx - bw / 2 - pad_left) / scale, 0, orig_w)
-    y1 = np.clip((cy - bh / 2 - pad_top)  / scale, 0, orig_h)
-    x2 = np.clip((cx + bw / 2 - pad_left) / scale, 0, orig_w)
-    y2 = np.clip((cy + bh / 2 - pad_top)  / scale, 0, orig_h)
+    x1 = np.clip(cx - bw / 2, 0, _MODEL_SIZE)
+    y1 = np.clip(cy - bh / 2, 0, _MODEL_SIZE)
+    x2 = np.clip(cx + bw / 2, 0, _MODEL_SIZE)
+    y2 = np.clip(cy + bh / 2, 0, _MODEL_SIZE)
 
     keep = _nms(np.stack([x1, y1, x2, y2], axis=1), scores, iou_thresh)
 
@@ -181,11 +155,11 @@ class Detector:
         return resolved
 
     def run(self, img_bgr: np.ndarray) -> list:
-        orig_h, orig_w = img_bgr.shape[:2]
-        blob, scale, pad_top, pad_left = _letterbox(img_bgr, self.resolution)
+        # img_bgr is already 640×640 (letterboxed by C#).
+        # BGR → RGB, HWC → NCHW, normalise to [0, 1].
+        blob = (img_bgr[:, :, ::-1].astype(np.float32) / 255.0).transpose(2, 0, 1)[np.newaxis]
         outputs = self.session.run(None, {self.input_name: blob})
-        return _decode(outputs, orig_h, orig_w, scale, pad_top, pad_left,
-                       self.conf_thresh, self.iou_thresh)
+        return _decode(outputs, self.conf_thresh, self.iou_thresh)
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +195,19 @@ log.write(
     f'providers={detector.active_providers}'
 )
 
-app = FastAPI()
+# Port is resolved in __main__ and stored here so the lifespan handler can
+# announce it only after uvicorn is actually listening.
+_announced_port = 0
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Announce the server port on stdout only after uvicorn has bound its socket."""
+    print(f'PORT:{_announced_port}', flush=True)
+    yield
+
+
+app = FastAPI(lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -235,20 +221,16 @@ async def shutdown():
 
 @app.post('/detect_raw')
 async def detect_raw(request: Request):
-    """Detect NSFW content in a raw BGRA image.
+    """Detect NSFW content in a pre-letterboxed 640×640 BGRA frame.
 
-    Required headers:
-      X-Image-Width  — image width in pixels
-      X-Image-Height — image height in pixels
-
-    Body: raw BGRA bytes (width × height × 4), no encoding.
+    Body: exactly 640×640×4 raw BGRA bytes (1,638,400 bytes), no headers needed.
+    Boxes in the response are in 640×640 pixel space; C# un-projects them to
+    tile-local and then screen coordinates.
     """
     try:
-        w = int(request.headers['x-image-width'])
-        h = int(request.headers['x-image-height'])
         body = await request.body()
-        # Reconstruct BGR from raw BGRA — drop alpha channel.
-        img_bgra = np.frombuffer(body, dtype=np.uint8).reshape(h, w, 4)
+        # Drop alpha — SkiaSharp sends BGRA, model expects BGR.
+        img_bgra = np.frombuffer(body, dtype=np.uint8).reshape(_MODEL_SIZE, _MODEL_SIZE, 4)
         img_bgr  = np.ascontiguousarray(img_bgra[:, :, :3])
         detections = await asyncio.to_thread(detector.run, img_bgr)
         return {'detections': detections}
@@ -271,5 +253,6 @@ if __name__ == '__main__':
         sock.close()
 
     log.write(f'listening host=127.0.0.1 port={port}')
-    print(f'PORT:{port}', flush=True)
+    # PORT is announced from the lifespan handler _after_ uvicorn binds its socket.
+    _announced_port = port
     uvicorn.run(app, host='127.0.0.1', port=port, log_level='warning')
