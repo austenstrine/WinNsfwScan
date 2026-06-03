@@ -172,7 +172,7 @@ public partial class OverlayWindow : Window {
 	/// <summary>
 	/// Replaces all censorship rectangles with the provided detections.
 	/// </summary>
-	public void ReplaceBoxes(NudeNetDetection[] detections) {
+	public void ReplaceBoxes(NsfwDetection[] detections) {
 		BoxCanvas.Children.Clear();
 		AddBoxes(detections);
 	}
@@ -181,7 +181,7 @@ public partial class OverlayWindow : Window {
 	/// Appends black censorship rectangles for each detection.
 	/// Coordinates are in source-image physical pixels and are converted to WPF logical units.
 	/// </summary>
-	public void AddBoxes(NudeNetDetection[] detections) {
+	public void AddBoxes(NsfwDetection[] detections) {
 		AppLogger.Info($"OverlayWindow.AddBoxes adding {detections.Length} boxes (total children={BoxCanvas.Children.Count + detections.Length})");
 
 		foreach(var d in detections) {

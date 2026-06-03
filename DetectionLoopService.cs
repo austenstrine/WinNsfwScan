@@ -11,7 +11,7 @@ namespace WinNsfwScan;
 
 public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
-	private readonly NudeNetClient _nudeNetClient;
+	private readonly NsfwClient _nsfwClient;
 	private readonly TimeSpan _scanInterval;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
@@ -19,7 +19,7 @@ public sealed class DetectionLoopService : IDisposable {
 	// Matches the resolution the server backend is launched with (erax_nsfw_yolo11m.onnx @ 640).
 	private const int InferenceSize = 640;
 
-	public event Action<long, NudeNetDetection[]>? NsfwDetected;
+	public event Action<long, NsfwDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
 
 	private record ScanRegionInfo(int OffsetX, int OffsetY, int Width, int Height, string Name);
@@ -36,10 +36,10 @@ public sealed class DetectionLoopService : IDisposable {
 		? (double)_totalCycleMs / _measuredCycleCount
 		: null;
 
-	public DetectionLoopService(ScreenCaptureService screenCaptureService, NudeNetClient nudeNetClient, TimeSpan? scanInterval = null) {
+	public DetectionLoopService(ScreenCaptureService screenCaptureService, NsfwClient nudeNetClient, TimeSpan? scanInterval = null) {
 		//AppLogger.Info("DetectionLoopService.ctor entered");
 		_screenCaptureService = screenCaptureService;
-		_nudeNetClient = nudeNetClient;
+		_nsfwClient = nudeNetClient;
 		_scanInterval = scanInterval ?? TimeSpan.FromSeconds(1);
 		//AppLogger.Info($"DetectionLoopService.ctor configured interval={_scanInterval.TotalMilliseconds}ms");
 	}
@@ -97,9 +97,9 @@ public sealed class DetectionLoopService : IDisposable {
 			bool hadScreenshot = false;
 			int width = 0;
 			int height = 0;
-			NudeNetDetection[]? nsfwDetections = null;
+			NsfwDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
-			(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
+			(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -128,7 +128,7 @@ public sealed class DetectionLoopService : IDisposable {
 					}
 
 					var detectSw = Stopwatch.StartNew();
-					var regionTasks = new List<Task<(NudeNetDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
+					var regionTasks = new List<Task<(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
 
 					for (int tileIndex = 0; tileIndex < scanRegions.Count; tileIndex++) {
 						var region = scanRegions[tileIndex];
@@ -146,14 +146,14 @@ public sealed class DetectionLoopService : IDisposable {
 							}
 							slotEncodeSw.Stop();
 
-							NudeNetDetection[] detections;
+							NsfwDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								detections = await _nudeNetClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", serverIndex).ConfigureAwait(false);
+								detections = await _nsfwClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", serverIndex).ConfigureAwait(false);
 							}
 							catch (Exception ex) {
 								AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
-								detections = Array.Empty<NudeNetDetection>();
+								detections = Array.Empty<NsfwDetection>();
 							}
 							slotDetectSw.Stop();
 
@@ -175,12 +175,12 @@ public sealed class DetectionLoopService : IDisposable {
 
 					// Consolidate and adjust coordinates.
 					// Detection boxes are in InferenceSize×InferenceSize space; scale back to each quadrant's screen pixels.
-					var allDetections = new List<NudeNetDetection>();
+					var allDetections = new List<NsfwDetection>();
 					foreach (var tileResult in results) {
 						double scaleX = (double)tileResult.RegionInfo.Width / InferenceSize;
 						double scaleY = (double)tileResult.RegionInfo.Height / InferenceSize;
 						foreach (var detection in tileResult.Detections) {
-							allDetections.Add(new NudeNetDetection(
+							allDetections.Add(new NsfwDetection(
 								detection.Class,
 								detection.Score,
 								(int)Math.Round(detection.X * scaleX) + tileResult.RegionInfo.OffsetX,
@@ -250,7 +250,7 @@ public sealed class DetectionLoopService : IDisposable {
 		_disposed = true;
 
 		StopAsync().GetAwaiter().GetResult();
-		_nudeNetClient.Dispose();
+		_nsfwClient.Dispose();
 		_screenCaptureService.Dispose();
 		//AppLogger.Info("DetectionLoopService.Dispose completed");
 	}

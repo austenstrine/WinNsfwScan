@@ -13,10 +13,10 @@ public partial class App : System.Windows.Application {
 	private static readonly TimeSpan MinimizeCooldown = TimeSpan.FromSeconds(10);
 
 	private sealed class TrackedBox {
-		public NudeNetDetection Detection { get; set; }
+		public NsfwDetection Detection { get; set; }
 		public long LastSeenCycle { get; set; }
 
-		public TrackedBox(NudeNetDetection detection, long lastSeenCycle) {
+		public TrackedBox(NsfwDetection detection, long lastSeenCycle) {
 			Detection = detection;
 			LastSeenCycle = lastSeenCycle;
 		}
@@ -63,7 +63,7 @@ public partial class App : System.Windows.Application {
 			_trayIcon = new TrayIconService();
 
 			var screenCaptureService = new ScreenCaptureService();
-			var nudeNetClient = new NudeNetClient();
+			var nudeNetClient = new NsfwClient();
 			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.Zero);
 			_detectionLoopService.NsfwDetected += OnNsfwDetected;
 			_detectionLoopService.CycleCompleted += OnCycleCompleted;
@@ -85,7 +85,7 @@ public partial class App : System.Windows.Application {
 		}
 	}
 
-	private void OnNsfwDetected(long cycleNumber, NudeNetDetection[] detections) {
+	private void OnNsfwDetected(long cycleNumber, NsfwDetection[] detections) {
 		//AppLogger.Info($"App.OnNsfwDetected entered detections={detections.Length}");
 		Dispatcher.InvokeAsync(() => UpdateTrackedBoxes(cycleNumber, detections));
 	}
@@ -97,7 +97,7 @@ public partial class App : System.Windows.Application {
 		});
 	}
 
-	private void UpdateTrackedBoxes(long cycleNumber, NudeNetDetection[] detections) {
+	private void UpdateTrackedBoxes(long cycleNumber, NsfwDetection[] detections) {
 		var hardDetections = detections
 			.Where(d => NsfwClassifier.IsHardNsfwDetection(d.Class, d.Score))
 			.OrderByDescending(d => d.Score)
@@ -134,7 +134,7 @@ public partial class App : System.Windows.Application {
 		}
 	}
 
-	private bool TryRefreshTrackedBox(NudeNetDetection detection, long cycleNumber) {
+	private bool TryRefreshTrackedBox(NsfwDetection detection, long cycleNumber) {
 		foreach(var trackedBox in _trackedBoxes) {
 			if(!string.Equals(trackedBox.Detection.Class, detection.Class, StringComparison.OrdinalIgnoreCase))
 				continue;
@@ -166,7 +166,7 @@ public partial class App : System.Windows.Application {
 		}
 	}
 
-	private void TryMinimizeWindowForDetection(NudeNetDetection detection) {
+	private void TryMinimizeWindowForDetection(NsfwDetection detection) {
 		DateTime now = DateTime.UtcNow;
 		if(now - _lastWindowMinimizeUtc < MinimizeCooldown)
 			return;
@@ -187,7 +187,7 @@ public partial class App : System.Windows.Application {
 		}
 	}
 
-	private static float GetIntersectionOverUnion(NudeNetDetection a, NudeNetDetection b) {
+	private static float GetIntersectionOverUnion(NsfwDetection a, NsfwDetection b) {
 		int aRight = a.X + a.Width;
 		int aBottom = a.Y + a.Height;
 		int bRight = b.X + b.Width;

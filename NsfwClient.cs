@@ -11,7 +11,7 @@ using System.Threading.Tasks;
 
 namespace WinNsfwScan;
 
-public class NudeNetClient : IDisposable {
+public class NsfwClient : IDisposable {
 	// One server process per tile so each has its own isolated DML device and can
 	// run inference in parallel without GPU device contention.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
@@ -30,7 +30,7 @@ public class NudeNetClient : IDisposable {
 
 	public int ServerCount => _ports.Count;
 
-	public NudeNetClient() {
+	public NsfwClient() {
 		//AppLogger.Info("NudeNetClient.ctor entered");
 		// Read config
 		string configPath = Path.Combine(AppContext.BaseDirectory, "server", "backend.json");
@@ -108,7 +108,7 @@ public class NudeNetClient : IDisposable {
 	/// Detect NSFW content in an image on the given server.
 	/// Sends raw JPEG bytes as application/octet-stream to avoid multipart parsing overhead.
 	/// </summary>
-	public async Task<NudeNetDetection[]> DetectAsync(byte[] imageBytes, string fileName, int serverIndex) {
+	public async Task<NsfwDetection[]> DetectAsync(byte[] imageBytes, string fileName, int serverIndex) {
 
 		int port = _ports[serverIndex];
 
@@ -130,7 +130,7 @@ public class NudeNetClient : IDisposable {
 		using var doc = JsonDocument.Parse(json);
 		var detectionsEl = doc.RootElement.GetProperty("detections");
 
-		var result = new List<NudeNetDetection>();
+		var result = new List<NsfwDetection>();
 		var nsfwRawDetections = new List<string>();
 		foreach(var detection in detectionsEl.EnumerateArray()) {
 			string className = detection.GetProperty("class").GetString()!;
@@ -140,7 +140,7 @@ public class NudeNetClient : IDisposable {
 			int y = (int)box[1].GetDouble();
 			int w = (int)box[2].GetDouble();
 			int h = (int)box[3].GetDouble();
-			result.Add(new NudeNetDetection(className, score, x, y, w, h));
+			result.Add(new NsfwDetection(className, score, x, y, w, h));
 
 			if (NsfwClassifier.IsNsfwDetection(className, score)) {
 				nsfwRawDetections.Add(detection.GetRawText());
@@ -151,7 +151,7 @@ public class NudeNetClient : IDisposable {
 
 		if (nsfwRawDetections.Count > 0) {
 			string nsfwJson = "[" + string.Join(",", nsfwRawDetections) + "]";
-			AppLogger.Info($"NudeNet NSFW positives server={serverIndex} file={fileName} detections={nsfwJson}");
+			AppLogger.Info($"NSFW positives server={serverIndex} file={fileName} detections={nsfwJson}");
 		}
 
 		//AppLogger.Info($"NudeNetClient.DetectAsync parse={parseSw.ElapsedMilliseconds}ms total={result.Count} explicit={result.Count(d => NsfwClassifier.IsNsfwClass(d.Class))}");
