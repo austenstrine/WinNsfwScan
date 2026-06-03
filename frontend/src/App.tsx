@@ -34,7 +34,6 @@ type WebViewBridge = {
 }
 
 const DEFAULT_HARD_BLOCK_SECONDS = 10
-
 function getWebView(): WebViewBridge | undefined {
 	return (window as Window & { chrome?: { webview?: WebViewBridge } }).chrome?.webview
 }
@@ -155,9 +154,11 @@ function App() {
 						onTestHardBlock={handleTestHardBlock}
 						onManageSubscription={handleManageSubscription}
 						ctrlAltHeld={ctrlAltHeld}
-						onDebugExit={handleDebugExit}					globalMinScore={globalMinScore}
-					hardMinScore={hardMinScore}
-					onThresholdChange={handleThresholdChange}					/>
+						onDebugExit={handleDebugExit}
+						globalMinScore={globalMinScore}
+						hardMinScore={hardMinScore}
+						onThresholdChange={handleThresholdChange}
+					/>
 				)}
 
 				<div className="text-center mt-8 text-xs text-slate-500">

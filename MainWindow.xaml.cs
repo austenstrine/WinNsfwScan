@@ -315,7 +315,7 @@ public partial class MainWindow : Window {
 					if (raw != null) {
 						using var doc = System.Text.Json.JsonDocument.Parse(raw);
 						if (doc.RootElement.TryGetProperty("type", out var typeProp) &&
-						    typeProp.GetString() == "set-thresholds") {
+							typeProp.GetString() == "set-thresholds") {
 							if (doc.RootElement.TryGetProperty("globalMinScore", out var g))
 								NsfwClassifier.GlobalMinScore = (float)g.GetDouble();
 							if (doc.RootElement.TryGetProperty("hardMinScore", out var h))

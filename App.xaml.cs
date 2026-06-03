@@ -8,7 +8,7 @@ using System.Windows.Threading;
 namespace WinNsfwScan;
 
 public partial class App : System.Windows.Application {
-	private const long BoxLifetimeCycles = 10;
+	private const long BoxLifetimeCycles = 2;
 	private const float BoxMergeIouThreshold = 0.25f;
 	private static readonly TimeSpan MinimizeCooldown = TimeSpan.FromSeconds(10);
 

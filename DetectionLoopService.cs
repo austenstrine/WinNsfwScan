@@ -21,6 +21,16 @@ public sealed class DetectionLoopService : IDisposable {
 	private CancellationTokenSource? _cts;
 	private Task? _loopTask;
 	private bool _disposed;
+	private static readonly (int Columns, int Rows)[] GridCyclePatterns = [
+		(2, 3),
+		(3, 2),
+		(3, 4),
+		(4, 3),
+		(4, 5),
+		(5, 4),
+		(5, 6),
+		(6, 5),
+	];
 
 	private long _totalCycleMs;
 	private long _measuredCycleCount;
@@ -105,8 +115,10 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					const int tileColumns = 4;
-					const int tileRows = 3;
+					int cyclePatternIndex = (int)((cycleNumber - 1) % GridCyclePatterns.Length);
+					var grid = GridCyclePatterns[cyclePatternIndex];
+					int tileColumns = grid.Columns;
+					int tileRows = grid.Rows;
 					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
 					for(int row = 0; row < tileRows; row++) {
 						int y0 = (height * row) / tileRows;
