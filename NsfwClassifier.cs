@@ -7,8 +7,8 @@ using System.Text;
 /// EraX classes: anus, make_love, nipple, penis, vagina — all are explicit NSFW.
 /// </summary>
 public static class NsfwClassifier {
-	public static float GlobalMinScore = 0.25f;
-	public static float HardMinScore = 0.50f;
+	public static float GlobalMinScore = 0.05f;
+	public static float HardMinScore = 0.70f;
 
 	public static bool IsNsfwClass(string className) {
 		return IsNsfwDetection(className, 1.0f);
