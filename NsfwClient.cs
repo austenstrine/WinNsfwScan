@@ -19,8 +19,6 @@ public class NsfwClient : IDisposable {
 		("erax_nsfw_yolo11m.onnx", 640),
 		("erax_nsfw_yolo11m.onnx", 640),
 		("erax_nsfw_yolo11m.onnx", 640),
-		("erax_nsfw_yolo11m.onnx", 640),
-		("erax_nsfw_yolo11m.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();

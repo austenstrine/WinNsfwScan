@@ -15,9 +15,6 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly TimeSpan _scanInterval;
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
-	// Pre-downscale crops to the model's input size before JPEG encoding.
-	// Matches the resolution the server backend is launched with (erax_nsfw_yolo11m.onnx @ 640).
-	private const int InferenceSize = 640;
 
 	public event Action<long, NsfwDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
@@ -111,7 +108,7 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					const int tileColumns = 3;
+					const int tileColumns = 2;
 					const int tileRows = 2;
 					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
 					for(int row = 0; row < tileRows; row++) {
@@ -136,11 +133,11 @@ public sealed class DetectionLoopService : IDisposable {
 						regionTasks.Add(Task.Run(async () => {
 							var slotEncodeSw = Stopwatch.StartNew();
 							byte[] imageBytes;
-							using (var regionBitmap = new SKBitmap(InferenceSize, InferenceSize)) {
+							using (var regionBitmap = new SKBitmap(region.Width, region.Height)) {
 								using (var canvas = new SKCanvas(regionBitmap)) {
-									var source = new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height);
-									var dest = new SKRect(0, 0, InferenceSize, InferenceSize);
-									canvas.DrawBitmap(screenshot, source, dest);
+									canvas.DrawBitmap(screenshot,
+										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
+										new SKRect(0, 0, region.Width, region.Height));
 								}
 								imageBytes = EncodeForTransport(regionBitmap);
 							}
@@ -173,20 +170,18 @@ public sealed class DetectionLoopService : IDisposable {
 					encodedBytes = results.Sum(x => x.Bytes);
 					detectMs = detectSw.ElapsedMilliseconds;
 
-					// Consolidate and adjust coordinates.
-					// Detection boxes are in InferenceSize×InferenceSize space; scale back to each quadrant's screen pixels.
+					// Consolidate detections, adjusting from tile-local coordinates to screen coordinates.
+					// The server returns boxes in original tile-pixel space (letterboxing is internal to the server).
 					var allDetections = new List<NsfwDetection>();
 					foreach (var tileResult in results) {
-						double scaleX = (double)tileResult.RegionInfo.Width / InferenceSize;
-						double scaleY = (double)tileResult.RegionInfo.Height / InferenceSize;
 						foreach (var detection in tileResult.Detections) {
 							allDetections.Add(new NsfwDetection(
 								detection.Class,
 								detection.Score,
-								(int)Math.Round(detection.X * scaleX) + tileResult.RegionInfo.OffsetX,
-								(int)Math.Round(detection.Y * scaleY) + tileResult.RegionInfo.OffsetY,
-								(int)Math.Round(detection.Width * scaleX),
-								(int)Math.Round(detection.Height * scaleY)
+								detection.X + tileResult.RegionInfo.OffsetX,
+								detection.Y + tileResult.RegionInfo.OffsetY,
+								detection.Width,
+								detection.Height
 							));
 						}
 					}
