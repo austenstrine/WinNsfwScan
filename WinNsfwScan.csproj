@@ -22,13 +22,6 @@
 		<VenvPython Condition="'$(OS)' != 'Windows_NT'">$(ProjectDir)venv/bin/python</VenvPython>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<Content Include="server\backend.json">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-			<CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-		</Content>
-	</ItemGroup>
-
 	<!-- ===================================================== -->
 	<!--  Automatically build frontend on every dotnet build   -->
 	<!-- ===================================================== -->
@@ -37,12 +30,14 @@
 
 		<Exec Command="npm run build" WorkingDirectory="$(ProjectDir)frontend" ContinueOnError="false" />
 
-		<!-- Copy dist folder into output directory -->
+		<!-- Wipe stale webui output then copy fresh dist -->
+		<RemoveDir Directories="$(OutputPath)webui" />
+
 		<ItemGroup>
 			<FrontendFiles Include="$(ProjectDir)frontend\dist\**\*.*" />
 		</ItemGroup>
 
-		<Copy SourceFiles="@(FrontendFiles)" DestinationFolder="$(OutputPath)webui\%(RecursiveDir)" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="@(FrontendFiles)" DestinationFolder="$(OutputPath)webui\%(RecursiveDir)" />
 
 		<Message Text="=== Frontend built and copied to webui/ ===" Importance="high" />
 	</Target>
@@ -60,7 +55,7 @@
 	<Target Name="GenerateBackendConfig" BeforeTargets="Build"
 	        Inputs="$(ProjectDir)server\server.py;$(ProjectDir)server\server.spec"
 	        Outputs="$(BackendProjectDir)\$(BackendExecutable)">
-		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --hidden-import onnxruntime --hidden-import onnxruntime.capi._pybind_state --name server --distpath $(BackendProjectDir) --workpath $(ProjectDir)build --specpath $(BackendProjectDir) server\server.py" WorkingDirectory="$(ProjectDir)" />
+		<Exec Command="&quot;$(VenvPython)&quot; -m PyInstaller --onefile --hidden-import python_multipart --hidden-import onnxruntime --hidden-import onnxruntime.capi._pybind_state --exclude-module torch --exclude-module torchvision --exclude-module torchaudio --exclude-module ultralytics --exclude-module tensorboard --exclude-module matplotlib --exclude-module IPython --exclude-module scipy --exclude-module sklearn --exclude-module pandas --exclude-module nudenet --name server --distpath $(BackendProjectDir) --workpath $(ProjectDir)build --specpath $(BackendProjectDir) server\server.py" WorkingDirectory="$(ProjectDir)" />
 
 		<WriteLinesToFile File="$(BackendProjectDir)\backend.json" Lines="{ &quot;ServerExecutable&quot;: &quot;$(BackendExecutable)&quot; }" Overwrite="true" />
 
@@ -68,21 +63,36 @@
 	</Target>
 
 	<Target Name="CopyBackendArtifactsToOutput" AfterTargets="Build">
+		<!-- Wipe stale server output then copy fresh artifacts -->
+		<RemoveDir Directories="$(OutputPath)server" />
+
 		<ItemGroup>
 			<BackendArtifacts Include="$(BackendProjectDir)\$(BackendExecutable)" Condition="Exists('$(BackendProjectDir)\$(BackendExecutable)')" />
 			<BackendArtifacts Include="$(BackendProjectDir)\*.onnx" />
+			<BackendArtifacts Include="$(BackendProjectDir)\backend.json" Condition="Exists('$(BackendProjectDir)\backend.json')" />
 		</ItemGroup>
 
-		<Copy SourceFiles="@(BackendArtifacts)" DestinationFolder="$(OutputPath)server\" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="@(BackendArtifacts)" DestinationFolder="$(OutputPath)server\" />
 	</Target>
 
 	<Target Name="CopyBackendArtifactsToPublish" AfterTargets="Publish">
+		<!-- Wipe stale server publish output then copy fresh artifacts -->
+		<RemoveDir Directories="$(PublishDir)server" />
+		<RemoveDir Directories="$(PublishDir)webui" />
+
 		<ItemGroup>
 			<BackendArtifactsPublish Include="$(BackendProjectDir)\$(BackendExecutable)" Condition="Exists('$(BackendProjectDir)\$(BackendExecutable)')" />
 			<BackendArtifactsPublish Include="$(BackendProjectDir)\*.onnx" />
+			<BackendArtifactsPublish Include="$(BackendProjectDir)\backend.json" Condition="Exists('$(BackendProjectDir)\backend.json')" />
 		</ItemGroup>
 
-		<Copy SourceFiles="@(BackendArtifactsPublish)" DestinationFolder="$(PublishDir)server\" SkipUnchangedFiles="true" />
+		<Copy SourceFiles="@(BackendArtifactsPublish)" DestinationFolder="$(PublishDir)server\" />
+
+		<ItemGroup>
+			<FrontendFilesPublish Include="$(ProjectDir)frontend\dist\**\*.*" />
+		</ItemGroup>
+
+		<Copy SourceFiles="@(FrontendFilesPublish)" DestinationFolder="$(PublishDir)webui\%(RecursiveDir)" />
 	</Target>
 
 </Project>

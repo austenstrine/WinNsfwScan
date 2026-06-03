@@ -19,7 +19,13 @@ type CtrlAltStateMessage = {
 	held: boolean
 }
 
-type IncomingMessage = HardBlockMessage | ProtectionStateMessage | CtrlAltStateMessage
+type ThresholdStateMessage = {
+	type: 'threshold-state'
+	globalMinScore: number
+	hardMinScore: number
+}
+
+type IncomingMessage = HardBlockMessage | ProtectionStateMessage | CtrlAltStateMessage | ThresholdStateMessage
 
 type WebViewBridge = {
 	addEventListener: (type: 'message', listener: (event: MessageEvent) => void) => void
@@ -39,6 +45,8 @@ function App() {
 	const [protectionIsRequested, setProtectionIsRequested] = useState(false)
 	const [protectionSecondsRemaining, setProtectionSecondsRemaining] = useState(0)
 	const [ctrlAltHeld, setCtrlAltHeld] = useState(false)
+	const [globalMinScore, setGlobalMinScore] = useState(0.05)
+	const [hardMinScore, setHardMinScore] = useState(0.70)
 
 	const postToHost = useCallback((msg: string) => {
 		getWebView()?.postMessage(msg)
@@ -80,10 +88,17 @@ function App() {
 				setCtrlAltHeld(message.held)
 				return
 			}
+
+			if(message.type === 'threshold-state') {
+				setGlobalMinScore(message.globalMinScore)
+				setHardMinScore(message.hardMinScore)
+				return
+			}
 		}
 
 		webView.addEventListener('message', handleMessage)
 		postToHost('get-protection-state')
+		postToHost('get-thresholds')
 		return () => webView.removeEventListener('message', handleMessage)
 	}, [postToHost])
 
@@ -121,6 +136,12 @@ function App() {
 		postToHost('debug-exit')
 	}, [postToHost])
 
+	const handleThresholdChange = useCallback((newGlobal: number, newHard: number) => {
+		postToHost(JSON.stringify({ type: 'set-thresholds', globalMinScore: newGlobal, hardMinScore: newHard }))
+		setGlobalMinScore(newGlobal)
+		setHardMinScore(newHard)
+	}, [postToHost])
+
 	return (
 		<div className="min-h-screen bg-slate-950 text-slate-200 p-8">
 			<div className="max-w-2xl mx-auto">
@@ -134,8 +155,9 @@ function App() {
 						onTestHardBlock={handleTestHardBlock}
 						onManageSubscription={handleManageSubscription}
 						ctrlAltHeld={ctrlAltHeld}
-						onDebugExit={handleDebugExit}
-					/>
+						onDebugExit={handleDebugExit}					globalMinScore={globalMinScore}
+					hardMinScore={hardMinScore}
+					onThresholdChange={handleThresholdChange}					/>
 				)}
 
 				<div className="text-center mt-8 text-xs text-slate-500">

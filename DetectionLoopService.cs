@@ -13,9 +13,6 @@ public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NsfwClient _nsfwClient;
 	private readonly TimeSpan _scanInterval;
-	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
-	private const int TransportImageQuality = 80;
-
 	public event Action<long, NsfwDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
 
@@ -96,7 +93,7 @@ public sealed class DetectionLoopService : IDisposable {
 			int height = 0;
 			NsfwDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
-			(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)[]? results = null;
+			(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotExtractMs, long SlotDetectMs)[]? results = null;
 
 			try {
 				var captureSw = Stopwatch.StartNew();
@@ -108,7 +105,7 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					const int tileColumns = 2;
+					const int tileColumns = 4;
 					const int tileRows = 2;
 					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
 					for(int row = 0; row < tileRows; row++) {
@@ -125,28 +122,28 @@ public sealed class DetectionLoopService : IDisposable {
 					}
 
 					var detectSw = Stopwatch.StartNew();
-					var regionTasks = new List<Task<(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotEncodeMs, long SlotDetectMs)>>();
+					var regionTasks = new List<Task<(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotExtractMs, long SlotDetectMs)>>();
 
 					for (int tileIndex = 0; tileIndex < scanRegions.Count; tileIndex++) {
 						var region = scanRegions[tileIndex];
 						int serverIndex = tileIndex;
 						regionTasks.Add(Task.Run(async () => {
-							var slotEncodeSw = Stopwatch.StartNew();
-							byte[] imageBytes;
+							var slotExtractSw = Stopwatch.StartNew();
+							byte[] rawBytes;
 							using (var regionBitmap = new SKBitmap(region.Width, region.Height)) {
 								using (var canvas = new SKCanvas(regionBitmap)) {
 									canvas.DrawBitmap(screenshot,
 										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
 										new SKRect(0, 0, region.Width, region.Height));
 								}
-								imageBytes = EncodeForTransport(regionBitmap);
+								rawBytes = regionBitmap.Bytes;
 							}
-							slotEncodeSw.Stop();
+							slotExtractSw.Stop();
 
 							NsfwDetection[] detections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								detections = await _nsfwClient.DetectAsync(imageBytes, $"screen-{region.Name}.jpg", serverIndex).ConfigureAwait(false);
+								detections = await _nsfwClient.DetectAsync(rawBytes, region.Width, region.Height, $"screen-{region.Name}", serverIndex).ConfigureAwait(false);
 							}
 							catch (Exception ex) {
 								AppLogger.Error($"DetectionLoopService detect error for {region.Name}", ex);
@@ -157,8 +154,8 @@ public sealed class DetectionLoopService : IDisposable {
 							return (
 								Detections: detections,
 								RegionInfo: region,
-								Bytes: imageBytes.Length,
-								SlotEncodeMs: slotEncodeSw.ElapsedMilliseconds,
+							Bytes: rawBytes.Length,
+							SlotExtractMs: slotExtractSw.ElapsedMilliseconds,
 								SlotDetectMs: slotDetectSw.ElapsedMilliseconds
 							);
 						}));
@@ -166,7 +163,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 					results = await Task.WhenAll(regionTasks).ConfigureAwait(false);
 					detectSw.Stop();
-					encodeMs = results.Sum(x => x.SlotEncodeMs);
+					encodeMs = results.Sum(x => x.SlotExtractMs);
 					encodedBytes = results.Sum(x => x.Bytes);
 					detectMs = detectSw.ElapsedMilliseconds;
 
@@ -213,9 +210,9 @@ public sealed class DetectionLoopService : IDisposable {
 				var slotBreakdown = results == null
 					? "n/a"
 					: string.Join(" | ", results.Select(r =>
-						$"{r.RegionInfo.Name}: encode={r.SlotEncodeMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
+						$"{r.RegionInfo.Name}: extract={r.SlotExtractMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms captureBackend={captureBackend} wallEncode={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=jpeg quality={TransportImageQuality} nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms captureBackend={captureBackend} wallExtract={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=raw nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
 				);
 				CycleCompleted?.Invoke(cycleNumber);
 			}
@@ -224,17 +221,6 @@ public sealed class DetectionLoopService : IDisposable {
 		}
 
 		//AppLogger.Info("DetectionLoopService.RunLoopAsync stopped");
-	}
-
-	private static byte[] EncodeForTransport(SKBitmap bitmap) {
-		//AppLogger.Info("DetectionLoopService.EncodeForTransport entered");
-		using var image = SKImage.FromBitmap(bitmap);
-		using var data = image.Encode(TransportImageFormat, TransportImageQuality);
-		if(data == null) {
-			throw new InvalidOperationException("Failed to encode screenshot for transport.");
-		}
-
-		return data.ToArray();
 	}
 
 	public void Dispose() {

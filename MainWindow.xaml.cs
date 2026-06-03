@@ -286,6 +286,10 @@ public partial class MainWindow : Window {
 				SendProtectionState();
 				break;
 
+			case "get-thresholds":
+				SendThresholdState();
+				break;
+
 			case "request-disable-protection":
 				WatchdogService.RequestDisable();
 				SendProtectionState();
@@ -303,12 +307,37 @@ public partial class MainWindow : Window {
 			case "debug-exit":
 				WatchdogService.ForceExit();
 				break;
+
+			default:
+				// Try to parse as JSON for structured messages.
+				try {
+					var raw = args.TryGetWebMessageAsString();
+					if (raw != null) {
+						using var doc = System.Text.Json.JsonDocument.Parse(raw);
+						if (doc.RootElement.TryGetProperty("type", out var typeProp) &&
+						    typeProp.GetString() == "set-thresholds") {
+							if (doc.RootElement.TryGetProperty("globalMinScore", out var g))
+								NsfwClassifier.GlobalMinScore = (float)g.GetDouble();
+							if (doc.RootElement.TryGetProperty("hardMinScore", out var h))
+								NsfwClassifier.HardMinScore = (float)h.GetDouble();
+							AppLogger.Info($"Thresholds updated global={NsfwClassifier.GlobalMinScore:F2} hard={NsfwClassifier.HardMinScore:F2}");
+							SendThresholdState();
+						}
+					}
+				}
+				catch { }
+				break;
 		}
 	}
 
 	private void SendProtectionState() {
 		var (isRequested, secondsRemaining) = WatchdogService.GetCooldownState();
 		string json = $"{{\"type\":\"protection-state\",\"isRequested\":{(isRequested ? "true" : "false")},\"secondsRemaining\":{secondsRemaining}}}";
+		TryPostWebMessage(json);
+	}
+
+	private void SendThresholdState() {
+		string json = $"{{\"type\":\"threshold-state\",\"globalMinScore\":{NsfwClassifier.GlobalMinScore.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)},\"hardMinScore\":{NsfwClassifier.HardMinScore.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}}}";
 		TryPostWebMessage(json);
 	}
 

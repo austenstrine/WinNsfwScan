@@ -15,10 +15,14 @@ public class NsfwClient : IDisposable {
 	// One server process per tile so each has its own isolated DML device and can
 	// run inference in parallel without GPU device contention.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("erax_nsfw_yolo11m.onnx", 640),
-		("erax_nsfw_yolo11m.onnx", 640),
-		("erax_nsfw_yolo11m.onnx", 640),
-		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
+		("erax_nsfw_yolo11n.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();
@@ -103,16 +107,19 @@ public class NsfwClient : IDisposable {
 	}
 
 	/// <summary>
-	/// Detect NSFW content in an image on the given server.
-	/// Sends raw JPEG bytes as application/octet-stream to avoid multipart parsing overhead.
+	/// Detect NSFW content in a tile image on the given server.
+	/// Sends raw BGRA pixel bytes (SkiaSharp Bgra8888) with X-Image-Width / X-Image-Height headers
+	/// to avoid JPEG encode/decode overhead and quality loss.
 	/// </summary>
-	public async Task<NsfwDetection[]> DetectAsync(byte[] imageBytes, string fileName, int serverIndex) {
+	public async Task<NsfwDetection[]> DetectAsync(byte[] rawBgraBytes, int width, int height, string fileName, int serverIndex) {
 
 		int port = _ports[serverIndex];
 
-		//AppLogger.Info($"NudeNetClient.DetectAsync entered size={imageBytes.Length} server={serverIndex}");
-		using var content = new ByteArrayContent(imageBytes);
+		//AppLogger.Info($"NsfwClient.DetectAsync entered size={rawBgraBytes.Length} {width}x{height} server={serverIndex}");
+		using var content = new ByteArrayContent(rawBgraBytes);
 		content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+		content.Headers.Add("X-Image-Width",  width.ToString());
+		content.Headers.Add("X-Image-Height", height.ToString());
 
 		var requestSw = Stopwatch.StartNew();
 		var response = await _httpClient.PostAsync($"http://127.0.0.1:{port}/detect_raw", content);

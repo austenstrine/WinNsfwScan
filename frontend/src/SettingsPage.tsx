@@ -6,6 +6,9 @@ type SettingsPageProps = {
 	onManageSubscription: () => void
 	ctrlAltHeld: boolean
 	onDebugExit: () => void
+	globalMinScore: number
+	hardMinScore: number
+	onThresholdChange: (globalMin: number, hardMin: number) => void
 }
 
 function formatCountdown(totalSeconds: number): string {
@@ -14,7 +17,7 @@ function formatCountdown(totalSeconds: number): string {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-function SettingsPage({ protectionIsRequested, protectionSecondsRemaining, onRequestDisableProtection, onTestHardBlock, onManageSubscription, ctrlAltHeld, onDebugExit }: SettingsPageProps) {
+function SettingsPage({ protectionIsRequested, protectionSecondsRemaining, onRequestDisableProtection, onTestHardBlock, onManageSubscription, ctrlAltHeld, onDebugExit, globalMinScore, hardMinScore, onThresholdChange }: SettingsPageProps) {
 	const protectionDisabled = protectionIsRequested && protectionSecondsRemaining === 0
 
 	return (
@@ -42,7 +45,49 @@ function SettingsPage({ protectionIsRequested, protectionSecondsRemaining, onReq
 			</div>
 
 			<div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
-				<h2 className="text-lg font-medium mb-5">Actions</h2>
+				<h2 className="text-lg font-medium mb-5">Detection Sensitivity</h2>
+				<div className="space-y-6">
+					<div>
+						<div className="flex justify-between mb-2">
+							<label className="text-sm font-medium">Global min score</label>
+							<span className="text-sm font-mono text-slate-300 tabular-nums">{globalMinScore.toFixed(2)}</span>
+						</div>
+						<input
+							type="range" min={0.01} max={0.99} step={0.01}
+							value={globalMinScore}
+							onChange={e => onThresholdChange(parseFloat(e.target.value), hardMinScore)}
+							className="w-full accent-emerald-500"
+						/>
+						<div className="flex justify-between text-xs text-slate-500 mt-1">
+							<span>Sensitive (0.01)</span>
+							<span>Strict (0.99)</span>
+						</div>
+						<p className="text-xs text-slate-400 mt-2">Minimum confidence to register any detection. Lower = more detections, higher = fewer false positives.</p>
+					</div>
+
+					<div className="border-t border-slate-800" />
+
+					<div>
+						<div className="flex justify-between mb-2">
+							<label className="text-sm font-medium">Hard block threshold</label>
+							<span className="text-sm font-mono text-slate-300 tabular-nums">{hardMinScore.toFixed(2)}</span>
+						</div>
+						<input
+							type="range" min={0.01} max={0.99} step={0.01}
+							value={hardMinScore}
+							onChange={e => onThresholdChange(globalMinScore, parseFloat(e.target.value))}
+							className="w-full accent-red-500"
+						/>
+						<div className="flex justify-between text-xs text-slate-500 mt-1">
+							<span>Sensitive (0.01)</span>
+							<span>Strict (0.99)</span>
+						</div>
+						<p className="text-xs text-slate-400 mt-2">Confidence required to trigger a hard screen block. Should be ≥ global min score.</p>
+					</div>
+				</div>
+			</div>
+
+			<div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-6">
 
 				<div className="space-y-4">
 					<div className="flex items-center justify-between">
