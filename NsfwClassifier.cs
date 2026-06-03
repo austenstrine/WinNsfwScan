@@ -1,59 +1,44 @@
 namespace WinNsfwScan;
 
+using System.Text;
+
 /// <summary>
-/// Shared utility for filtering NSFW class names from NudeNet detection results.
+/// Shared utility for filtering and labelling EraX NSFW detection results.
+/// EraX classes: anus, make_love, nipple, penis, vagina — all are explicit NSFW.
 /// </summary>
 public static class NsfwClassifier {
-	private const float GlobalMinScore = 0.05f;
-	private const float HardMinScore = 0.70f;
+	public static float GlobalMinScore = 0.25f;
+	public static float HardMinScore = 0.50f;
 
 	public static bool IsNsfwClass(string className) {
 		return IsNsfwDetection(className, 1.0f);
 	}
 
+	/// <summary>All EraX detections above the score threshold are NSFW.</summary>
 	public static bool IsNsfwDetection(string className, float score) {
-		if(score < GlobalMinScore)
-			return false;
-
-		// Exclude face classes entirely
-		if(className.StartsWith("FACE_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		// Exclude feet classes entirely
-		if(className.StartsWith("FEET_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		// Exclude armpit classes entirely
-		if(className.StartsWith("ARMPIT_", StringComparison.OrdinalIgnoreCase)
-			|| className.StartsWith("ARMPITS_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		// Exclude hand classes entirely
-		if(className.StartsWith("HAND_", StringComparison.OrdinalIgnoreCase)
-			|| className.StartsWith("HANDS_", StringComparison.OrdinalIgnoreCase))
-			return false;
-
-		// Exclude male classes except for male genitalia
-		if(className.StartsWith("MALE_", StringComparison.OrdinalIgnoreCase)) {
-			return className.Contains("GENITALIA", StringComparison.OrdinalIgnoreCase);
-		}
-
-		return true;
+		return score >= GlobalMinScore;
 	}
 
+	/// <summary>All EraX classes are explicit enough to warrant hard-blocking above the hard threshold.</summary>
 	public static bool IsHardNsfwDetection(string className, float score) {
-		if(score < HardMinScore)
-			return false;
+		return score >= HardMinScore;
+	}
 
-		if(className.Contains("GENITALIA", StringComparison.OrdinalIgnoreCase))
-			return true;
+	public static string GetClassShortCode(string className) {
+		if(string.IsNullOrWhiteSpace(className))
+			return "NSFW";
 
-		if(string.Equals(className, "FEMALE_BREAST_EXPOSED", StringComparison.OrdinalIgnoreCase))
-			return true;
+		string[] parts = className.Split('_', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		if(parts.Length == 0)
+			return "NSFW";
 
-		if(className.Contains("BUTTOCKS_EXPOSED", StringComparison.OrdinalIgnoreCase))
-			return true;
+		var sb = new StringBuilder(3);
+		foreach(string part in parts) {
+			if(part.Length == 0) continue;
+			sb.Append(char.ToUpperInvariant(part[0]));
+			if(sb.Length >= 3) break;
+		}
 
-		return false;
+		return sb.Length > 0 ? sb.ToString() : "NSFW";
 	}
 }

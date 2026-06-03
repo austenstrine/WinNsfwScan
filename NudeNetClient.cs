@@ -15,14 +15,12 @@ public class NudeNetClient : IDisposable {
 	// One server process per tile so each has its own isolated DML device and can
 	// run inference in parallel without GPU device contention.
 	private static readonly (string Model, int Resolution)[] ServerConfigs = {
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
-		("320n.onnx", 320),
+		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11m.onnx", 640),
+		("erax_nsfw_yolo11m.onnx", 640),
 	};
 
 	private readonly List<Process> _processes = new();

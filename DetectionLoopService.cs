@@ -16,8 +16,8 @@ public sealed class DetectionLoopService : IDisposable {
 	private const SKEncodedImageFormat TransportImageFormat = SKEncodedImageFormat.Jpeg;
 	private const int TransportImageQuality = 80;
 	// Pre-downscale crops to the model's input size before JPEG encoding.
-	// Matches the resolution the server backend is launched with (320n.onnx @ 320).
-	private const int InferenceSize = 320;
+	// Matches the resolution the server backend is launched with (erax_nsfw_yolo11m.onnx @ 640).
+	private const int InferenceSize = 640;
 
 	public event Action<long, NudeNetDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
@@ -111,7 +111,7 @@ public sealed class DetectionLoopService : IDisposable {
 					hadScreenshot = true;
 					width = screenshot.Width;
 					height = screenshot.Height;
-					const int tileColumns = 4;
+					const int tileColumns = 3;
 					const int tileRows = 2;
 					var scanRegions = new List<ScanRegionInfo>(tileColumns * tileRows);
 					for(int row = 0; row < tileRows; row++) {

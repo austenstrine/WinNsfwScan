@@ -75,7 +75,7 @@ public partial class App : System.Windows.Application {
 			_overlayWindow = new OverlayWindow();
 			_overlayWindow.Show();
 
-			WindowsToastService.TryShow("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} online).");
+			WindowsToastService.TryShow("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} EraX online).");
 
 			AppLogger.Info("App.OnStartup completed");
 		}
