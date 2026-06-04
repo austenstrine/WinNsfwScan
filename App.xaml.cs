@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Windows;
@@ -47,6 +48,7 @@ public partial class App : System.Windows.Application {
 		WindowsToastService.Initialize();
 
 		AppLogger.Info($"App logger initialized at {AppLogger.LogFilePath}");
+		AppLogger.Info($"Model logs: erax={AppLogger.EraxLogFilePath} nudenet={AppLogger.NudeNetLogFilePath} nsfwsharp={AppLogger.NsfwSharpLogFilePath}");
 		DispatcherUnhandledException += OnDispatcherUnhandledException;
 		AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
 
@@ -64,7 +66,9 @@ public partial class App : System.Windows.Application {
 
 			var screenCaptureService = new ScreenCaptureService();
 			var nudeNetClient = new NsfwClient();
-			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, TimeSpan.Zero);
+			string nsfwSharpModelPath = Path.Combine(AppContext.BaseDirectory, "server", "erax_nsfw_yolo11n.onnx");
+			var nsfwSharpPool = new NsfwSharpPool(nsfwSharpModelPath, 3);
+			_detectionLoopService = new DetectionLoopService(screenCaptureService, nudeNetClient, nsfwSharpPool, TimeSpan.Zero);
 			_detectionLoopService.NsfwDetected += OnNsfwDetected;
 			_detectionLoopService.CycleCompleted += OnCycleCompleted;
 			_detectionLoopService.Start();
@@ -75,7 +79,7 @@ public partial class App : System.Windows.Application {
 			_overlayWindow = new OverlayWindow();
 			_overlayWindow.Show();
 
-			WindowsToastService.TryShow("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.ServerCount} EraX online).");
+			WindowsToastService.TryShow("WinNsfwScan", $"All detection servers are ready ({nudeNetClient.EraxServerCount} EraX + {nudeNetClient.NudeNetServerCount} NudeNet + {nsfwSharpPool.InstanceCount} NsfwSharp).");
 
 			AppLogger.Info("App.OnStartup completed");
 		}
@@ -99,7 +103,7 @@ public partial class App : System.Windows.Application {
 
 	private void UpdateTrackedBoxes(long cycleNumber, NsfwDetection[] detections) {
 		var hardDetections = detections
-			.Where(d => NsfwClassifier.IsHardNsfwDetection(d.Class, d.Score))
+			.Where(d => NsfwClassifier.IsHardNsfwDetection(d.Source, d.Class, d.Score))
 			.OrderByDescending(d => d.Score)
 			.ToArray();
 

@@ -12,6 +12,7 @@ namespace WinNsfwScan;
 public sealed class DetectionLoopService : IDisposable {
 	private readonly ScreenCaptureService _screenCaptureService;
 	private readonly NsfwClient _nsfwClient;
+	private readonly NsfwSharpPool _nsfwSharpPool;
 	private readonly TimeSpan _scanInterval;
 	public event Action<long, NsfwDetection[]>? NsfwDetected;
 	public event Action<long>? CycleCompleted;
@@ -22,14 +23,8 @@ public sealed class DetectionLoopService : IDisposable {
 	private Task? _loopTask;
 	private bool _disposed;
 	private static readonly (int Columns, int Rows)[] GridCyclePatterns = [
-		(2, 3),
 		(3, 2),
-		(3, 4),
-		(4, 3),
-		(4, 5),
-		(5, 4),
 		(5, 6),
-		(6, 5),
 	];
 
 	private long _totalCycleMs;
@@ -40,10 +35,11 @@ public sealed class DetectionLoopService : IDisposable {
 		? (double)_totalCycleMs / _measuredCycleCount
 		: null;
 
-	public DetectionLoopService(ScreenCaptureService screenCaptureService, NsfwClient nudeNetClient, TimeSpan? scanInterval = null) {
+	public DetectionLoopService(ScreenCaptureService screenCaptureService, NsfwClient nudeNetClient, NsfwSharpPool nsfwSharpPool, TimeSpan? scanInterval = null) {
 		//AppLogger.Info("DetectionLoopService.ctor entered");
 		_screenCaptureService = screenCaptureService;
 		_nsfwClient = nudeNetClient;
+		_nsfwSharpPool = nsfwSharpPool;
 		_scanInterval = scanInterval ?? TimeSpan.FromSeconds(1);
 		//AppLogger.Info($"DetectionLoopService.ctor configured interval={_scanInterval.TotalMilliseconds}ms");
 	}
@@ -103,6 +99,12 @@ public sealed class DetectionLoopService : IDisposable {
 			int height = 0;
 			NsfwDetection[]? nsfwDetections = null;
 			int allDetectionCount = 0;
+			int allEraxDetectionCount = 0;
+			int allNudeNetDetectionCount = 0;
+			int allNsfwSharpDetectionCount = 0;
+			int nsfwEraxDetectionCount = 0;
+			int nsfwNudeNetDetectionCount = 0;
+			int nsfwNsfwSharpDetectionCount = 0;
 			(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotExtractMs, long SlotDetectMs)[]? results = null;
 
 			try {
@@ -135,44 +137,117 @@ public sealed class DetectionLoopService : IDisposable {
 
 					var detectSw = Stopwatch.StartNew();
 					var regionTasks = new List<Task<(NsfwDetection[] Detections, ScanRegionInfo RegionInfo, int Bytes, long SlotExtractMs, long SlotDetectMs)>>();
-					// One semaphore per server — each server handles only one inference at a time.
-					var serverSlots = Enumerable.Range(0, _nsfwClient.ServerCount)
+					// One semaphore per HTTP server — each server handles only one inference at a time.
+					int httpCount = _nsfwClient.ServerCount;
+					int totalSlots = httpCount + _nsfwSharpPool.InstanceCount;
+					var serverSlots = Enumerable.Range(0, httpCount)
 						.Select(_ => new SemaphoreSlim(1, 1))
 						.ToArray();
 
 					for (int tileIndex = 0; tileIndex < scanRegions.Count; tileIndex++) {
 						var region = scanRegions[tileIndex];
-						int serverIndex = tileIndex % _nsfwClient.ServerCount;
-						var serverSlot = serverSlots[serverIndex];
+						int slotIndex = tileIndex % totalSlots;
+						bool isNsfwSharp = slotIndex >= httpCount;
+						int serverIndex = slotIndex;
+						int nsfwSharpInstanceIndex = slotIndex - httpCount;
+						SemaphoreSlim? serverSlot = isNsfwSharp ? null : serverSlots[slotIndex];
 						regionTasks.Add(Task.Run(async () => {
-							// Letterbox tile to 640×640 in C#.
-							// Scale so the largest dimension fits in 640, pad remainder with YOLO grey (114).
-							const int modelSize = 640;
-							double lbScale = Math.Min((double)modelSize / region.Width, (double)modelSize / region.Height);
-							int scaledW = (int)(region.Width  * lbScale);
-							int scaledH = (int)(region.Height * lbScale);
-							int padLeft = (modelSize - scaledW) / 2;
-							int padTop  = (modelSize - scaledH) / 2;
-
 							var slotExtractSw = Stopwatch.StartNew();
-							byte[] rawBytes;
-							using (var lbBitmap = new SKBitmap(modelSize, modelSize)) {
-								using (var canvas = new SKCanvas(lbBitmap)) {
+							byte[] payloadBytes;
+							string contentType;
+							double preprocessScale;
+							int padLeft;
+							int padTop;
+
+							if(isNsfwSharp) {
+								// NsfwSharp path: extract raw tile SKBitmap; YoloDotNet preprocesses internally.
+								padLeft = 0;
+								padTop = 0;
+								preprocessScale = 1.0;
+								payloadBytes = Array.Empty<byte>();
+								contentType = "nsfwsharp";
+
+								using var tileBitmap = new SKBitmap(region.Width, region.Height);
+								using(var canvas = new SKCanvas(tileBitmap)) {
+									canvas.Clear(SKColors.Black);
+									canvas.DrawBitmap(screenshot,
+										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
+										new SKRect(0, 0, region.Width, region.Height));
+								}
+								slotExtractSw.Stop();
+
+								NsfwDetection[] nsfwSharpRaw;
+							var nsfwSharpDetectSw = Stopwatch.StartNew();
+							try {
+								nsfwSharpRaw = await _nsfwSharpPool.AnalyzeAsync(tileBitmap, nsfwSharpInstanceIndex).ConfigureAwait(false);
+							}
+							catch(Exception ex) {
+								AppLogger.Error($"DetectionLoopService NsfwSharp error for {region.Name}", ex);
+								AppLogger.ModelError("nsfwsharp", $"Tile error region={region.Name} instance={nsfwSharpInstanceIndex}", ex);
+								nsfwSharpRaw = Array.Empty<NsfwDetection>();
+							}
+							nsfwSharpDetectSw.Stop();
+							int nsfwSharpPositives = nsfwSharpRaw.Count(d => NsfwClassifier.IsNsfwDetection(d.Source, d.Class, d.Score));
+							AppLogger.ModelInfo("nsfwsharp",
+								$"Perf region={region.Name} instance={nsfwSharpInstanceIndex} extractMs={slotExtractSw.ElapsedMilliseconds} detectMs={nsfwSharpDetectSw.ElapsedMilliseconds} totalDetections={nsfwSharpRaw.Length} nsfwDetections={nsfwSharpPositives} tile={region.Width}x{region.Height}");
+
+							return (
+								Detections: nsfwSharpRaw,
+								RegionInfo: region,
+								Bytes: 0,
+								SlotExtractMs: slotExtractSw.ElapsedMilliseconds,
+								SlotDetectMs: nsfwSharpDetectSw.ElapsedMilliseconds
+								);
+							}
+							else if(_nsfwClient.IsNudeNetServer(serverIndex)) {
+								// NudeNet path: preserve tile dimensions and pad to square only.
+								// NudeNet performs its own internal resize to model resolution.
+								int squareSize = Math.Max(region.Width, region.Height);
+								padLeft = (squareSize - region.Width) / 2;
+								padTop = (squareSize - region.Height) / 2;
+								preprocessScale = 1.0;
+
+								using var squareBitmap = new SKBitmap(squareSize, squareSize);
+								using(var canvas = new SKCanvas(squareBitmap)) {
+									canvas.Clear(new SKColor(114, 114, 114));
+									canvas.DrawBitmap(screenshot,
+										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
+										new SKRect(padLeft, padTop, padLeft + region.Width, padTop + region.Height));
+								}
+
+								using var image = SKImage.FromBitmap(squareBitmap);
+								using var encoded = image.Encode(SKEncodedImageFormat.Png, 90);
+								payloadBytes = encoded.ToArray();
+								contentType = "image/png";
+							}
+							else {
+								// ERAx path: C# letterboxes to 640x640 raw BGRA before inference.
+								const int modelSize = 640;
+								preprocessScale = Math.Min((double)modelSize / region.Width, (double)modelSize / region.Height);
+								int scaledW = (int)(region.Width * preprocessScale);
+								int scaledH = (int)(region.Height * preprocessScale);
+								padLeft = (modelSize - scaledW) / 2;
+								padTop = (modelSize - scaledH) / 2;
+
+								using var lbBitmap = new SKBitmap(modelSize, modelSize);
+								using(var canvas = new SKCanvas(lbBitmap)) {
 									canvas.Clear(new SKColor(114, 114, 114));
 									canvas.DrawBitmap(screenshot,
 										new SKRect(region.OffsetX, region.OffsetY, region.OffsetX + region.Width, region.OffsetY + region.Height),
 										new SKRect(padLeft, padTop, padLeft + scaledW, padTop + scaledH));
 								}
-								rawBytes = lbBitmap.Bytes;
+
+								payloadBytes = lbBitmap.Bytes;
+								contentType = "application/octet-stream";
 							}
 							slotExtractSw.Stop();
 
 							NsfwDetection[] rawDetections;
 							var slotDetectSw = Stopwatch.StartNew();
 							try {
-								await serverSlot.WaitAsync().ConfigureAwait(false);
+									await serverSlot!.WaitAsync().ConfigureAwait(false);
 								try {
-									rawDetections = await _nsfwClient.DetectAsync(rawBytes, $"screen-{region.Name}", serverIndex).ConfigureAwait(false);
+									rawDetections = await _nsfwClient.DetectAsync(payloadBytes, $"screen-{region.Name}", serverIndex, contentType).ConfigureAwait(false);
 								} finally {
 									serverSlot.Release();
 								}
@@ -183,19 +258,20 @@ public sealed class DetectionLoopService : IDisposable {
 							}
 							slotDetectSw.Stop();
 
-							// Un-project boxes from 640×640 letterbox space → tile-local pixel space.
+							// Un-project boxes from padded model-space back to tile-local coordinates.
 							var detections = rawDetections.Select(d => new NsfwDetection(
 								d.Class, d.Score,
-								(int)Math.Round(Math.Max(0.0, d.X - padLeft) / lbScale),
-								(int)Math.Round(Math.Max(0.0, d.Y - padTop)  / lbScale),
-								(int)Math.Round(d.Width  / lbScale),
-								(int)Math.Round(d.Height / lbScale)
+								(int)Math.Round(Math.Max(0.0, d.X - padLeft) / preprocessScale),
+								(int)Math.Round(Math.Max(0.0, d.Y - padTop) / preprocessScale),
+								(int)Math.Round(d.Width / preprocessScale),
+								(int)Math.Round(d.Height / preprocessScale),
+								d.Source
 							)).ToArray();
 
 							return (
 								Detections: detections,
 								RegionInfo: region,
-								Bytes: rawBytes.Length,
+								Bytes: payloadBytes.Length,
 								SlotExtractMs: slotExtractSw.ElapsedMilliseconds,
 								SlotDetectMs: slotDetectSw.ElapsedMilliseconds						);
 					}));
@@ -216,13 +292,20 @@ public sealed class DetectionLoopService : IDisposable {
 								detection.X + tileResult.RegionInfo.OffsetX,
 								detection.Y + tileResult.RegionInfo.OffsetY,
 								detection.Width,
-								detection.Height
+								detection.Height,
+								detection.Source
 							));
 						}
 					}
 
 					allDetectionCount = allDetections.Count;
-					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwDetection(d.Class, d.Score)).ToArray();
+					allEraxDetectionCount = allDetections.Count(d => d.Source.Equals("erax", StringComparison.OrdinalIgnoreCase));
+					allNudeNetDetectionCount = allDetections.Count(d => d.Source.Equals("nudenet", StringComparison.OrdinalIgnoreCase));
+					allNsfwSharpDetectionCount = allDetections.Count(d => d.Source.Equals("nsfwsharp", StringComparison.OrdinalIgnoreCase));
+					nsfwDetections = allDetections.Where(d => NsfwClassifier.IsNsfwDetection(d.Source, d.Class, d.Score)).ToArray();
+					nsfwEraxDetectionCount = nsfwDetections.Count(d => d.Source.Equals("erax", StringComparison.OrdinalIgnoreCase));
+					nsfwNudeNetDetectionCount = nsfwDetections.Count(d => d.Source.Equals("nudenet", StringComparison.OrdinalIgnoreCase));
+					nsfwNsfwSharpDetectionCount = nsfwDetections.Count(d => d.Source.Equals("nsfwsharp", StringComparison.OrdinalIgnoreCase));
 
 					//AppLogger.Info($"DetectionLoopService detections: {string.Join(", ", allDetections.Select(d => $"{d.Class}:{d.Score:F2}({d.X},{d.Y},{d.Width}x{d.Height})" ))}");
 
@@ -245,12 +328,20 @@ public sealed class DetectionLoopService : IDisposable {
 					_totalCycleMs += cycleSw.ElapsedMilliseconds;
 					_measuredCycleCount++;
 				}
+
+				AppLogger.ModelInfo("erax",
+					$"CycleSummary cycle={cycleNumber} totalMs={cycleSw.ElapsedMilliseconds} detectMs={detectMs} allDetections={allEraxDetectionCount} nsfwDetections={nsfwEraxDetectionCount}");
+				AppLogger.ModelInfo("nudenet",
+					$"CycleSummary cycle={cycleNumber} totalMs={cycleSw.ElapsedMilliseconds} detectMs={detectMs} allDetections={allNudeNetDetectionCount} nsfwDetections={nsfwNudeNetDetectionCount}");
+				AppLogger.ModelInfo("nsfwsharp",
+					$"CycleSummary cycle={cycleNumber} totalMs={cycleSw.ElapsedMilliseconds} detectMs={detectMs} allDetections={allNsfwSharpDetectionCount} nsfwDetections={nsfwNsfwSharpDetectionCount}");
+
 				var slotBreakdown = results == null
 					? "n/a"
 					: string.Join(" | ", results.Select(r =>
 						$"{r.RegionInfo.Name}: extract={r.SlotExtractMs}ms detect={r.SlotDetectMs}ms detections={r.Detections.Length}"));
 				AppLogger.Info(
-					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms captureBackend={captureBackend} wallExtract={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=raw nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} slots=[{slotBreakdown}]"
+					$"Benchmark cycle={cycleNumber} total={cycleSw.ElapsedMilliseconds}ms capture={captureMs}ms captureBackend={captureBackend} wallExtract={encodeMs}ms totalDetect={detectMs}ms screenshot={(hadScreenshot ? "yes" : "no")} size={width}x{height} bytes={encodedBytes} format=mixed nsfw={(nsfwDetections?.Length ?? 0)}/{allDetectionCount} nsfwByModel=erax:{nsfwEraxDetectionCount},nudenet:{nsfwNudeNetDetectionCount},nsfwsharp:{nsfwNsfwSharpDetectionCount} allByModel=erax:{allEraxDetectionCount},nudenet:{allNudeNetDetectionCount},nsfwsharp:{allNsfwSharpDetectionCount} slots=[{slotBreakdown}]"
 				);
 				CycleCompleted?.Invoke(cycleNumber);
 			}
@@ -270,6 +361,7 @@ public sealed class DetectionLoopService : IDisposable {
 
 		StopAsync().GetAwaiter().GetResult();
 		_nsfwClient.Dispose();
+		_nsfwSharpPool.Dispose();
 		_screenCaptureService.Dispose();
 		//AppLogger.Info("DetectionLoopService.Dispose completed");
 	}

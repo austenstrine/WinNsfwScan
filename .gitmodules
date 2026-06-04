@@ -1,0 +1,3 @@
+[submodule "NsfwSharp"]
+	path = NsfwSharp
+	url = https://github.com/austenstrine/NsfwSharp.git
